@@ -1,0 +1,14 @@
+roll single { rise: 0.18, os: 8.62, settle: 0.48 } eul [ 14.88, 0, 0 ] h 2..2 pitchMax 0 satms 0 
+yaw single { rise: 0.48, os: 20.53, settle: 2.38 } eul [ 0, 0, 35.76 ] h 2..2 pitchMax 0 satms 0 
+thr single { rise: 1.63, os: 0, settle: 2.4 } eul [ 0, 0, 0 ] h 2.01..3.99 pitchMax 0 satms 0 
+att3 roll sq, alt hold { rise: 0.18, os: 8.62, settle: 0.48 } eul [ 14.88, -0, -0 ] h 2.95..3 pitchMax 0 satms 0 
+att3 + tiltcomp { rise: 0.18, os: 8.62, settle: 0.48 } eul [ 14.88, -0, 0 ] h 3..3 pitchMax 0 satms 0 
+att3 no althold { rise: 0.18, os: 8.57, settle: 0.47 } eul [ 14.88, -0, -0 ] h 0..2.73 pitchMax 0 satms 0 
+att3 roll30 yaw90 { rise: 0.24, os: 5.88, settle: 0.52 } eul [ 29.74, -0, 89.98 ] h 2.79..3.02 pitchMax 1.34 satms 0 
+att3 yaw sq 90 roll man 30 { rise: 0.7, os: 16.59, settle: 2.71 } eul [ 30.86, 1.54, -119.67 ] h 2.81..3.05 pitchMax 11.64 satms 0 
+att3 roll40 yaw sq90 sat { rise: 0.67, os: 20.04, settle: 2.72 } eul [ 41.32, 0, -125.05 ] h 2.63..3.1 pitchMax 16 satms 0 
+att3 acro { rise: 0.11, os: 8.18, settle: 0.69 } eul [ 46.58, 0, 0 ] h 0..0.98 pitchMax 0 satms 184 
+att3 acro pitch flip { rise: 0.11, os: 9.23, settle: 0.78 } eul [ 180, 23.29, 180 ] h 0..0.35 pitchMax 89.99 satms 444 
+att3 roll30 althold { rise: 0.24, os: 5.88, settle: 0.52 } eul [ 29.74, 0, 0 ] h 2.78..3.02 pitchMax 0 satms 0 
+att3 roll30 althold tilt { rise: 0.24, os: 5.89, settle: 0.52 } eul [ 29.74, -0, 0 ] h 3..3.01 pitchMax 0 satms 0 
+att3 roll30 althold noFF { rise: 0.24, os: 5.88, settle: 0.52 } eul [ 29.74, -0, 0 ] h 1.48..2.97 pitchMax 0 satms 0 

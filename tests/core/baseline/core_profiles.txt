@@ -1,0 +1,18 @@
+px4       climb 1s       pos [ 0, 0, -2.25 ] v [ 0, 0, -2.99 ] yaw 0 tilt 0
+px4       hold           pos [ 0, 0, -2.86 ] v [ 0, 0, -0.02 ] yaw 0 tilt 0
+px4       fwd 3s         pos [ 11.64, 0, -2.9 ] v [ 5.03, 0, -0.02 ] yaw -0 tilt 44.81
+px4       release        pos [ 14.98, -0, -2.92 ] v [ -0, -0, -0 ] yaw -0 tilt 38.77
+   stop dist 3.35
+px4       yaw 1.5s       pos [ 15, -0, -2.92 ] v [ 0.01, -0, -0 ] yaw 178.88 tilt 38.77
+px4       yaw stop       pos [ 15.01, 0, -2.92 ] v [ 0, 0, -0 ] yaw -140.3 tilt 38.77
+px4       small 0.3      pos [ 13.83, -1.11, -2.92 ] v [ -0.85, -0.81, -0 ] yaw -135.99 tilt 38.77
+   kick east max dev 1.69 final E -1.64
+consumer  climb 1s       pos [ 0, 0, -1.01 ] v [ 0, 0, -1.44 ] yaw 0 tilt 0
+consumer  hold           pos [ 0, 0, -1.36 ] v [ 0, 0, -0.01 ] yaw 0 tilt 0
+consumer  fwd 3s         pos [ 6.18, 0, -1.39 ] v [ 2.97, 0, -0.01 ] yaw 0 tilt 21.01
+consumer  release        pos [ 8.82, -0, -1.4 ] v [ -0.01, 0, -0 ] yaw 0 tilt 16.99
+   stop dist 2.64
+consumer  yaw 1.5s       pos [ 8.81, -0, -1.4 ] v [ -0, -0, -0 ] yaw 61.35 tilt 16.99
+consumer  yaw stop       pos [ 8.81, 0, -1.4 ] v [ -0, 0, -0 ] yaw 88.04 tilt 16.99
+consumer  small 0.3      pos [ 8.83, 0.62, -1.4 ] v [ 0.01, 0.44, -0 ] yaw 89.59 tilt 16.99
+   kick east max dev 1.18 final E 0.71

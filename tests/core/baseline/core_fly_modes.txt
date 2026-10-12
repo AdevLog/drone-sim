@@ -1,0 +1,19 @@
+idle                   armed false landed true pos [ 0, 0, 0 ] vel [ 0, 0, 0 ] eul [ 0, 0, 0 ] msg   
+arm gesture            armed true landed true pos [ 0, 0, 0 ] vel [ 0, 0, 0 ] eul [ 0, 0, 0 ] msg 已解鎖  
+armed idle             armed true landed true pos [ 0, 0, 0 ] vel [ 0, 0, 0 ] eul [ 0, 0, 0 ] msg 已解鎖  
+alt climb              armed true landed false pos [ 0, 0, -3.72 ] vel [ 0, 0, -1.37 ] eul [ 0, 0, 0 ] msg 已解鎖  
+alt hold               armed true landed false pos [ 0, 0, -3.97 ] vel [ 0, 0, -0.01 ] eul [ 0, 0, 0 ] msg 已解鎖  
+pos fwd                armed true landed false pos [ 11.64, 0, -3.98 ] vel [ 5.03, -0, -0.01 ] eul [ -0, -7.54, -0 ] msg 已解鎖  
+pos release            armed true landed false pos [ 15.01, -0, -3.99 ] vel [ -0.06, -0, -0 ] eul [ -0, -0.27, 0 ] msg 已解鎖  
+pos right              armed true landed false pos [ 14.95, 6.65, -3.97 ] vel [ -0.02, 4.89, -0.01 ] eul [ 8.96, -0.01, 0 ] msg 已解鎖  
+pos release2           armed true landed false pos [ 14.92, 9.98, -3.99 ] vel [ 0, -0.06, -0 ] eul [ 0.25, -0.01, 0 ] msg 已解鎖  
+yaw spin               armed true landed false pos [ 14.92, 9.97, -3.99 ] vel [ 0, 0.01, -0 ] eul [ -0.02, 0.02, 38.63 ] msg 已解鎖  
+yaw stop               armed true landed false pos [ 14.92, 9.98, -4 ] vel [ 0, 0, -0 ] eul [ -0, 0, 83.72 ] msg 已解鎖  
+stab center            armed true landed false pos [ 14.93, 9.98, -4 ] vel [ 0, 0, -0 ] eul [ -0, 0, 89.34 ] msg 已解鎖  
+stab roll              armed true landed false pos [ 10.92, 10.02, -3.44 ] vel [ -4, 0.03, 0.56 ] eul [ 15.94, -0.01, 89.74 ] msg 已解鎖  
+stab roll rel          armed true landed false pos [ 4.03, 10.07, -2.5 ] vel [ -2.68, 0.02, 0.37 ] eul [ 0.03, -0, 89.9 ] msg 已解鎖  
+descend                armed false landed true pos [ 0.11, 10.1, 0 ] vel [ 0, 0, 0 ] eul [ 0, 0, 89.96 ] msg 落地自動上鎖  
+after land             armed false landed true pos [ 0.11, 10.1, 0 ] vel [ 0, 0, 0 ] eul [ 0, 0, 89.96 ] msg 落地自動上鎖  
+h before cut 11.14
+crash true 落地速度 12.9 m/s（上限 3） false
+acro [ 27.63, 0.05, 0.83 ] h 14.26 true

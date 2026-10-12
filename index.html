@@ -1,0 +1,2423 @@
+<!doctype html>
+<!--
+  四旋翼控制實驗台 Quadrotor Control Lab
+  Copyright (c) 2026 AdevLog — https://github.com/AdevLog
+  原始版本：https://adevlog.github.io/drone-sim/
+  MIT License：可自由使用、修改與散布，但必須保留這段版權聲明與授權全文。
+  授權全文：https://github.com/AdevLog/drone-sim/blob/main/LICENSE
+-->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="author" content="AdevLog">
+<title>四旋翼控制實驗台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+/* Layout: 左欄 = 3D 視窗 + 方塊圖 + 響應曲線；右欄 = 地面站控制面板。窄螢幕上下堆疊。
+   Color: 洋紅 = 命令值（航電 PFD 的 flight director 慣例），青色 = 實際值。 */
+:root {
+  --ax1: #cc3a40; --ax2: #22825a; --ax3: #3557c8;
+  /* 鮮豔版：只用在線條、圓點、長條等圖形（亮色背景上對比約 3:1）；文字仍用較深的 --cmd / --act 以保持可讀 */
+  --cmd-vivid: #e8178c; --act-vivid: #00a88f;
+  --bg: #e9eef1;
+  --panel: #f7f9fa;
+  --panel-2: #eef2f4;
+  --ink: #12202a;
+  --muted: #586a77;
+  --line: #c9d3da;
+  --cmd: #b5136f;
+  --act: #0b7782;
+  --warn: #b86a00;
+  --good: #2a7a4c;
+  --scene: #d7e0e6;
+  --grid: #aab8c2;
+  --font-display: "Barlow Condensed", "Noto Sans TC", "Arial Narrow", sans-serif;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1217; --panel: #111b22; --panel-2: #16232c; --ink: #e1e9ee; --muted: #8798a5;
+    --line: #243540; --cmd: #f05aac; --act: #39c4c6; --warn: #eea33b; --good: #5cc98a;
+    --scene: #0a1116; --grid: #24343f; color-scheme: dark;
+    --ax1: #f06a6e; --ax2: #4cc38a; --ax3: #7d96f2;
+    --cmd-vivid: #f05aac; --act-vivid: #39c4c6;
+  }
+}
+:root[data-theme="dark"] {
+  --ax1: #f06a6e; --ax2: #4cc38a; --ax3: #7d96f2;
+  --cmd-vivid: #f05aac; --act-vivid: #39c4c6;
+  --bg: #0b1217; --panel: #111b22; --panel-2: #16232c; --ink: #e1e9ee; --muted: #8798a5;
+  --line: #243540; --cmd: #f05aac; --act: #39c4c6; --warn: #eea33b; --good: #5cc98a;
+  --scene: #0a1116; --grid: #24343f; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body);
+  font-size: 14px; line-height: 1.55; padding: 0 16px; padding-block: 14px 28px;
+}
+.top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 12px; }
+.top h1 { font-family: var(--font-display); font-weight: 700; font-size: 1.75rem; letter-spacing: .02em; margin: 0; text-wrap: balance; }
+.top .sub { color: var(--muted); font-size: .86rem; }
+.app { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+@media (min-width: 1040px) { .app { grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); align-items: start; } }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.viewport { position: relative; height: min(52vh, 520px); min-height: 300px; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: var(--scene); touch-action: none; }
+.viewport canvas { display: block; width: 100%; height: 100%; }
+.hud { position: absolute; left: 10px; top: 10px; display: grid; grid-template-columns: auto auto; gap: 1px 10px; font-family: var(--font-mono); font-size: .78rem; background: color-mix(in srgb, var(--panel) 82%, transparent); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 9px; pointer-events: none; font-variant-numeric: tabular-nums; }
+.hud .k { color: var(--muted); }
+.hud .on { color: var(--act); font-weight: 500; }
+.view-tools { position: absolute; right: 10px; top: 10px; display: flex; gap: 6px; }
+@media (max-width: 560px) { .view-hint { display: none; } }
+.viewport:fullscreen { height: 100%; min-height: 0; border: 0; border-radius: 0; }
+.viewport.vp-max { position: fixed; inset: 0; z-index: 40; height: auto; min-height: 0; border: 0; border-radius: 0; padding-top: env(safe-area-inset-top, 0px); }
+.viewport:fullscreen .view-hint, .viewport.vp-max .view-hint { display: none; }
+.view-hint { position: absolute; left: 10px; bottom: 8px; font-size: .75rem; color: var(--muted); pointer-events: none; }
+.rig-tag { position: absolute; right: 10px; bottom: 8px; font-family: var(--font-display); font-size: .82rem; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; pointer-events: none; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; min-width: 0; }
+.card > h2 { font-family: var(--font-display); font-weight: 600; font-size: .95rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.card > h2 .aside { text-transform: none; letter-spacing: 0; font-family: var(--font-body); font-weight: 400; font-size: .78rem; }
+
+/* 方塊圖 */
+.blocks-scroll { overflow-x: auto; padding-bottom: 4px; }
+.blocks { display: flex; align-items: stretch; gap: 0; width: max-content; min-width: 100%; }
+.blk { flex: 1 0 auto; border: 1px solid var(--line); border-radius: 5px; background: var(--panel-2); padding: 6px 7px; min-width: 0; transition: opacity .2s; }
+.blk.off { opacity: .35; }
+.blk .bt { font-family: var(--font-display); font-weight: 600; font-size: .86rem; letter-spacing: .03em; line-height: 1.2; }
+.blk .bs { font-size: .7rem; color: var(--muted); line-height: 1.3; margin-bottom: 3px; }
+.blk .bv { font-family: var(--font-mono); font-size: .74rem; font-variant-numeric: tabular-nums; line-height: 1.45; white-space: nowrap; }
+.blk .bv .c { color: var(--cmd); } .blk .bv .a { color: var(--act); } .blk .bv .w { color: var(--warn); }
+.arrow { flex: 0 0 auto; display: flex; flex-direction: column; justify-content: center; align-items: center; width: 46px; color: var(--muted); font-size: .66rem; padding: 0 3px; text-align: center; line-height: 1.15; }
+.arrow::before { content: "→"; font-size: 1rem; color: var(--ink); }
+.feedback { margin-top: 6px; font-size: .74rem; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 5px; }
+.feedback b { color: var(--act); font-weight: 500; }
+
+/* 圖表 */
+.chart-wrap { position: relative; height: 170px; }
+.chart-wrap canvas { width: 100%; height: 100%; display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .76rem; color: var(--muted); margin-top: 4px; }
+.legend i { display: inline-block; width: 16px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+.charts { display: flex; flex-direction: column; gap: 10px; }
+.chart-title { font-size: .8rem; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.chart-title b { color: var(--ink); font-weight: 500; }
+
+/* 控制面板 */
+.field { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.field:first-of-type { margin-top: 0; }
+.flabel { font-size: .8rem; color: var(--muted); }
+.seg { display: flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+.seg button { flex: 1 1 auto; font: inherit; font-size: .84rem; padding: 6px 8px; background: transparent; color: var(--ink); border: 0; border-right: 1px solid var(--line); cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.seg button:focus-visible, .btn:focus-visible, input:focus-visible { outline: 2px solid var(--cmd); outline-offset: 1px; }
+.btn { font: inherit; font-size: .84rem; padding: 6px 12px; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); border-radius: 5px; cursor: pointer; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.btn.kick { border-color: var(--warn); color: var(--warn); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.note { font-size: .78rem; color: var(--muted); margin: 6px 0 0; }
+
+.slider { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); }
+.slider:first-child { border-top: 0; }
+.slider .sid { font-family: var(--font-mono); font-size: .8rem; font-weight: 500; }
+.slider .sdesc { font-size: .74rem; color: var(--muted); grid-column: 1 / -1; margin-top: -2px; }
+.slider .sval { font-family: var(--font-mono); font-size: .82rem; font-variant-numeric: tabular-nums; text-align: right; display: flex; gap: 6px; align-items: center; }
+.slider input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--cmd-vivid); }
+.slider .def { font: inherit; font-size: .7rem; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+.loop-tag { font-family: var(--font-display); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; padding: 0 5px; border-radius: 3px; border: 1px solid var(--line); color: var(--muted); }
+.loop-tag.outer { border-color: var(--cmd); color: var(--cmd); }
+.loop-tag.inner { border-color: var(--act); color: var(--act); }
+.slider.dim { opacity: .4; }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: .84rem; margin-top: 8px; }
+.check input { margin-top: 4px; accent-color: var(--cmd); }
+
+.metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.metric { border: 1px solid var(--line); border-radius: 5px; padding: 6px 9px; background: var(--panel-2); }
+.metric .mk { font-size: .74rem; color: var(--muted); }
+.metric .mv { font-family: var(--font-mono); font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.metric .mh { font-size: .7rem; color: var(--muted); }
+.metric.bad .mv { color: var(--warn); }
+
+.motors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.motor { border: 1px solid var(--line); border-radius: 5px; padding: 6px 9px; background: var(--panel-2); }
+.motor .mt { display: flex; justify-content: space-between; font-size: .76rem; color: var(--muted); }
+.motor .mt b { font-family: var(--font-display); font-size: .9rem; color: var(--ink); letter-spacing: .04em; }
+.bar { position: relative; height: 10px; border-radius: 3px; background: var(--bg); border: 1px solid var(--line); margin: 5px 0 3px; overflow: hidden; }
+.bar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--act-vivid); }
+.bar .hover { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--muted); }
+.bar.sat .fill { background: var(--warn); }
+.motor .mv { font-family: var(--font-mono); font-size: .78rem; font-variant-numeric: tabular-nums; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 6px; }
+.motor .mv .sat-tag { color: var(--warn); }
+
+.tips { margin: 0; padding-left: 1.1em; font-size: .84rem; display: flex; flex-direction: column; gap: 5px; }
+.tips li::marker { color: var(--cmd); }
+.foot { font-size: .75rem; color: var(--muted); margin-top: 16px; }
+.blk { cursor: pointer; }
+.blk:hover { border-color: var(--muted); }
+.blk:focus-visible { outline: 2px solid var(--cmd); outline-offset: 1px; }
+.blk.active { border-color: var(--cmd); box-shadow: 0 0 0 1px var(--cmd); }
+.axes-toggle { display: inline-flex; align-items: center; gap: 5px; }
+.axes-toggle input { accent-color: var(--cmd); margin: 0; }
+.pop { position: fixed; z-index: 20; width: min(470px, calc(100vw - 32px)); max-height: min(70vh, 560px); overflow: auto; background: var(--panel); border: 1px solid var(--muted); border-radius: var(--r); box-shadow: 0 10px 30px rgb(0 0 0 / .22); padding: 10px 14px 12px; }
+.pop-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 4px; }
+.pop-head b { font-family: var(--font-display); font-size: 1.1rem; letter-spacing: .03em; }
+.pop-x { font: inherit; font-size: 1.2rem; line-height: 1; background: transparent; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); width: 28px; height: 28px; cursor: pointer; }
+.pop-body h3 { font-family: var(--font-display); font-weight: 600; font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 10px 0 3px; }
+.pop-body p { margin: 0; font-size: .84rem; }
+.pop-body .eq { font-family: var(--font-mono); font-size: .8rem; line-height: 1.6; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; overflow-x: auto; white-space: pre; font-variant-numeric: tabular-nums; }
+.pop-body .eq .c { color: var(--cmd); } .pop-body .eq .a { color: var(--act); } .pop-body .eq .w { color: var(--warn); } .pop-body .eq .m { color: var(--muted); }
+.pop-body .io { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; font-size: .82rem; }
+.pop-body .io span:nth-child(odd) { color: var(--muted); }
+.pfd-wrap { position: relative; height: 240px; border-radius: 5px; overflow: hidden; border: 1px solid var(--line); }
+.pfd-wrap canvas { display: block; width: 100%; height: 100%; }
+.man-grid { display: flex; flex-direction: column; }
+.arm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.pill { font-family: var(--font-display); font-weight: 600; letter-spacing: .06em; font-size: .9rem; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.armed { border-color: var(--good); color: var(--good); }
+.pill.arming { border-color: var(--warn); color: var(--warn); }
+.pill.crash { border-color: var(--warn); color: var(--panel); background: var(--warn); }
+.arm-msg { font-size: .8rem; color: var(--muted); }
+.arm-bar { height: 4px; background: var(--bg); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.arm-bar > div { height: 100%; width: 0; background: var(--warn); }
+.sticks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.stick-box { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: .76rem; color: var(--muted); }
+.stick-box canvas { width: 100%; max-width: 170px; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); touch-action: none; cursor: grab; }
+.exam-hud { position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%); width: min(340px, calc(100% - 24px)); background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 10px; font-size: .8rem; pointer-events: none; font-variant-numeric: tabular-nums; }
+.exam-hud b { font-family: var(--font-mono); }
+.exam-hud .ok { color: var(--good); } .exam-hud .w { color: var(--warn); } .exam-hud .muted { color: var(--muted); }
+.exam-bar { height: 5px; background: var(--bg); border-radius: 3px; margin: 4px 0; overflow: hidden; }
+.exam-bar i { display: block; height: 100%; background: var(--good); }
+.exam-row { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.banner { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); display: flex; gap: 10px; align-items: center; background: var(--warn); color: var(--panel); padding: 6px 8px 6px 12px; border-radius: var(--r); font-size: .86rem; max-width: calc(100% - 24px); flex-wrap: wrap; }
+.banner b { font-family: var(--font-display); letter-spacing: .08em; font-size: 1rem; }
+.legend .dash { background: none !important; border-top: 2px dashed; height: 0; }
+@media (prefers-reduced-motion: reduce) { .blk { transition: none; } }
+.credit { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); text-align: center; color: var(--muted); font-size: .8rem; }
+.credit a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.credit a:hover { color: var(--ink); }
+</style>
+
+</head>
+<body>
+<header class="top">
+  <h1>四旋翼控制實驗台</h1>
+  <span class="sub">單軸、三軸姿態與自由飛行 · 串級 PID、mixer、PX4 飛行模式</span>
+</header>
+
+<main class="app">
+  <section class="col">
+    <div class="viewport" id="viewport">
+      <div class="hud" id="hud"></div>
+      <div class="view-tools"><label class="btn axes-toggle"><input type="checkbox" id="chkAxes" checked> 座標軸</label><button class="btn" id="btnView" type="button">重設視角</button><button class="btn" id="btnRefly" type="button" title="快捷鍵 R：飛機回到 H、上鎖，畫面正對 H" hidden>重飛</button><button class="btn" id="btnFull" type="button" title="快捷鍵 F">全螢幕</button></div>
+      <div class="view-hint">拖曳旋轉視角 · 滾輪或雙指縮放 · 座標 NED / FRD：z 軸朝下</div>
+      <div class="rig-tag" id="rigTag"></div>
+      <div class="exam-hud" id="examHud" hidden></div>
+      <div class="banner" id="crashBanner" hidden><b>墜機</b><span id="crashText"></span><button class="btn" id="btnCrashReset" type="button">重新開始</button></div>
+    </div>
+
+    <div class="card">
+      <h2>訊號方塊圖 <span class="aside">點任一方塊看公式與代入數值</span></h2>
+      <div class="blocks-scroll">
+        <div class="blocks" id="blocks">
+          <div class="blk" id="bStick" tabindex="0" role="button" hidden><div class="bt">搖桿</div><div class="bs" id="bStickS">美國手</div><div class="bv" id="bStickV"></div></div>
+          <div class="arrow" id="aStick" hidden></div>
+          <div class="blk" id="bPos" tabindex="0" role="button" hidden><div class="bt">位置 / 速度</div><div class="bs" id="bPosS"></div><div class="bv" id="bPosV"></div></div>
+          <div class="arrow" id="aPos" hidden>姿態命令</div>
+          <div class="blk" id="bCmd" tabindex="0" role="button"><div class="bt">命令 r</div><div class="bs" id="bCmdS"></div><div class="bv" id="bCmdV"></div></div>
+          <div class="arrow" id="aErr1">誤差</div>
+          <div class="blk" id="bOuter" tabindex="0" role="button"><div class="bt">外迴圈 P</div><div class="bs" id="bOuterS"></div><div class="bv" id="bOuterV"></div></div>
+          <div class="arrow" id="aMid"></div>
+          <div class="blk" id="bInner" tabindex="0" role="button"><div class="bt">內迴圈 PID</div><div class="bs" id="bInnerS"></div><div class="bv" id="bInnerV"></div></div>
+          <div class="arrow" id="aU"></div>
+          <div class="blk" id="bMix" tabindex="0" role="button"><div class="bt">Mixer</div><div class="bs">分配成四顆馬達</div><div class="bv" id="bMixV"></div></div>
+          <div class="arrow">轉速命令</div>
+          <div class="blk" id="bMot" tabindex="0" role="button"><div class="bt">馬達 + 螺旋槳</div><div class="bs">一階延遲 τ = 30 ms<br>T = K<sub>T</sub>Ω²</div><div class="bv" id="bMotV"></div></div>
+          <div class="arrow">力 / 力矩</div>
+          <div class="blk" id="bPlant" tabindex="0" role="button"><div class="bt">機體動力學</div><div class="bs" id="bPlantS"></div><div class="bv" id="bPlantV"></div></div>
+        </div>
+        <div class="feedback" id="feedback"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>響應曲線 <span class="aside" id="chartAside">最近 8 秒</span></h2>
+      <div class="charts">
+        <div>
+          <div class="chart-title"><b id="c1title">外迴圈：角度</b><span id="c1unit"></span></div>
+          <div class="chart-wrap"><canvas id="chart1"></canvas></div>
+        </div>
+        <div>
+          <div class="chart-title"><b id="c2title">內迴圈：角速度</b><span id="c2unit"></span></div>
+          <div class="chart-wrap"><canvas id="chart2"></canvas></div>
+        </div>
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </section>
+
+  <aside class="col">
+    <div class="card">
+      <h2>主飛行顯示器 PFD <span class="aside">洋紅 = 命令（飛行指引）</span></h2>
+      <div class="pfd-wrap"><canvas id="pfd" aria-label="人工地平儀"></canvas></div>
+    </div>
+
+    <div class="card" id="flyCard" hidden>
+      <h2>飛行 <span class="aside" id="inputStatus"></span></h2>
+      <div class="field">
+        <span class="flabel">PX4 飛行模式</span>
+        <div class="seg" id="segFmode" role="group" aria-label="飛行模式">
+          <button type="button" data-v="acro">Acro</button>
+          <button type="button" data-v="stab">Stabilized</button>
+          <button type="button" data-v="alt">Altitude</button>
+          <button type="button" data-v="pos">Position</button>
+        </div>
+        <p class="note" id="fmodeNote"></p>
+      </div>
+      <div class="field">
+        <span class="flabel">操控手感（切換時 PID 與搖桿換算都回到該手感的預設值）</span>
+        <div class="seg" id="segProfile" role="group" aria-label="操控手感">
+          <button type="button" data-v="consumer">消費級</button>
+          <button type="button" data-v="px4">PX4 預設</button>
+        </div>
+        <p class="note" id="profileNote"></p>
+      </div>
+      <div class="arm-row">
+        <span class="pill" id="armPill">已上鎖</span>
+        <button class="btn" id="btnArm" type="button">解鎖</button>
+        <span class="arm-msg" id="armMsg"></span>
+      </div>
+      <div class="arm-bar" aria-hidden="true"><div id="armProg"></div></div>
+      <div class="sticks">
+        <div class="stick-box"><canvas id="stickL" aria-label="左搖桿：油門與 yaw"></canvas><span>左：油門 ↕ / Yaw ↔</span></div>
+        <div class="stick-box"><canvas id="stickR" aria-label="右搖桿：pitch 與 roll"></canvas><span>右：Pitch ↕ / Roll ↔</span></div>
+      </div>
+      <p class="note">可直接拖曳上面的搖桿。鍵盤：W/S 油門（Acro、Stabilized 放開停在原位；Altitude、Position 放開回中 = 定高）、A/D yaw、方向鍵 roll / pitch。Xbox 手把：美國手。<br>解鎖：左搖桿拉到<b>右下</b>維持 1 秒；上鎖：<b>左下</b>維持 1 秒（只能在地面）。</p>
+      <div class="row" style="margin-top:8px">
+        <span class="flabel">鏡頭</span>
+        <div class="seg" id="segCam" role="group" aria-label="鏡頭">
+          <button type="button" data-v="pilot">飛手視角</button>
+          <button type="button" data-v="chase">追尾</button>
+          <button type="button" data-v="orbit">環繞</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label class="check" style="margin:0"><input type="checkbox" id="chkTrail" checked><span>顯示軌跡（飛手視角 3 秒後淡出）</span></label>
+        <button class="btn" id="btnTrail" type="button">清除軌跡</button>
+      </div>
+      <label class="check"><input type="checkbox" id="chkExam" checked><span>考照場地（專業基本級，AC107-005D 圖 9）：P1~P4、容許帶 2 m、懸停計時</span></label>
+    </div>
+
+    <div class="card">
+      <h2>實驗設定</h2>
+      <div class="field">
+        <span class="flabel" id="axisLabel">觀察軸（其他軸鎖在測試架上）</span>
+        <div class="seg" id="segAxis" role="group" aria-label="觀察軸">
+          <button type="button" data-v="roll">Roll 滾轉</button>
+          <button type="button" data-v="pitch">Pitch 俯仰</button>
+          <button type="button" data-v="yaw">Yaw 偏航</button>
+          <button type="button" data-v="thr">油門 高度</button>
+          <button type="button" data-v="att3">三軸姿態</button>
+          <button type="button" data-v="fly">自由飛行</button>
+        </div>
+      </div>
+      <div class="field" id="loopField">
+        <span class="flabel">迴路</span>
+        <div class="seg" id="segLoop" role="group" aria-label="迴路">
+          <button type="button" data-v="cascade">串級：外迴圈 + 內迴圈</button>
+          <button type="button" data-v="inner">只開內迴圈</button>
+        </div>
+        <p class="note" id="loopNote"></p>
+      </div>
+      <div id="att3Box" hidden>
+        <div class="field">
+          <span class="flabel">波形套用在</span>
+          <div class="seg" id="segWaveAxis" role="group" aria-label="波形套用在">
+            <button type="button" data-v="roll">Roll</button>
+            <button type="button" data-v="pitch">Pitch</button>
+            <button type="button" data-v="yaw">Yaw</button>
+            <button type="button" data-v="thr">高度</button>
+            <button type="button" data-v="none">不套用</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="flabel" id="manLabel">手動姿態命令</span>
+          <div class="man-grid">
+            <div class="slider"><span class="sid" id="manL0">Roll</span><span class="sval" id="manV0"></span><input type="range" id="man0" aria-labelledby="manL0"></div>
+            <div class="slider"><span class="sid" id="manL1">Pitch</span><span class="sval" id="manV1"></span><input type="range" id="man1" aria-labelledby="manL1"></div>
+            <div class="slider"><span class="sid" id="manL2">Yaw</span><span class="sval" id="manV2"></span><input type="range" id="man2" aria-labelledby="manL2"></div>
+          </div>
+          <div class="row"><button class="btn" id="btnManZero" type="button">手動命令歸零</button></div>
+        </div>
+        <label class="check"><input type="checkbox" id="altHold"><span>高度保持（MPC_Z 串級）<br><span class="note" style="margin:0">關掉後總推力固定為 mg，傾斜時只能往下掉</span></span></label>
+        <label class="check"><input type="checkbox" id="tiltComp"><span>傾斜補償 F ÷ (cosφ·cosθ)<br><span class="note" style="margin:0">讓推力的垂直分量不因傾斜而減少</span></span></label>
+      </div>
+      <div class="field" id="waveField">
+        <span class="flabel">命令波形</span>
+        <div class="seg" id="segWave" role="group" aria-label="命令波形">
+          <button type="button" data-v="square">方波</button>
+          <button type="button" data-v="step">步階</button>
+          <button type="button" data-v="sine">正弦</button>
+        </div>
+        <p class="note" id="waveNote"></p>
+      </div>
+      <div class="slider" id="ampRow" style="border-top:0;padding-bottom:0">
+        <span class="flabel" id="ampLabel">振幅</span><span class="sval" id="ampVal"></span>
+        <input type="range" id="amp" aria-labelledby="ampLabel">
+      </div>
+      <div class="slider" id="periodRow">
+        <span class="flabel" id="perLabel">週期</span><span class="sval" id="perVal"></span>
+        <input type="range" id="period" min="1" max="20" step="0.5" aria-labelledby="perLabel">
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" id="btnPause" type="button">暫停</button>
+        <button class="btn" id="btnReset" type="button">重設</button>
+        <button class="btn kick" id="btnKick" type="button">施加擾動</button>
+        <div class="seg" id="segSpeed" role="group" aria-label="模擬速度" style="margin-left:auto">
+          <button type="button" data-v="1">1×</button>
+          <button type="button" data-v="0.25">0.25×</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>控制參數 <span class="aside" id="paramAside"></span></h2>
+      <div class="seg" id="segFocus" role="group" aria-label="檢視哪一軸" style="margin-bottom:6px" hidden>
+        <button type="button" data-v="roll">Roll</button>
+        <button type="button" data-v="pitch">Pitch</button>
+        <button type="button" data-v="yaw">Yaw</button>
+        <button type="button" data-v="thr">高度</button>
+        <button type="button" data-v="pos" id="focusPosBtn">位置</button>
+      </div>
+      <p class="note" id="focusNote" hidden>方塊圖、彈出視窗與「施加擾動」也會跟著這一軸。</p>
+      <div id="params"></div>
+      <label class="check" id="ffRow"><input type="checkbox" id="ff"><span>懸停推力前饋（MPC_THR_HOVER）<br><span class="note" style="margin:0">關掉後，抵抗重力只能靠 I 項慢慢累積</span></span></label>
+      <div class="row" style="margin-top:10px"><button class="btn" id="btnDefaults" type="button">全部回到預設</button></div>
+    </div>
+
+    <div class="card" id="metricsCard">
+      <h2>響應指標 <span class="aside" id="metricAside"></span></h2>
+      <div class="metrics" id="metrics"></div>
+      <p class="note">橘色 = 超出建議範圍：過衝 &gt; 20%、尚未穩定、未達 90%，或穩態誤差 &gt; 步階的 5%。</p>
+    </div>
+
+    <div class="card">
+      <h2>馬達輸出 <span class="aside">PWM 1000–2000 µs · 灰線 = 懸停</span></h2>
+      <div class="motors" id="motors"></div>
+      <p class="note">橘色 = 推力飽和：mixer 要求的推力超過上限，或低於下限（槳不能反轉），只能截在極限值，控制器要的力矩就給不足。</p>
+    </div>
+
+    <div class="card">
+      <h2>試試看</h2>
+      <ol class="tips" id="tips"></ol>
+    </div>
+  </aside>
+</main>
+<div class="pop" id="pop" role="dialog" aria-labelledby="popTitle" hidden>
+  <div class="pop-head"><b id="popTitle"></b><button class="pop-x" id="popClose" type="button" aria-label="關閉">×</button></div>
+  <div class="pop-body" id="popBody"></div>
+</div>
+<p class="foot">物理模型依《飛行動力學》p.5–11（剛體運動方程式、T = K<sub>T</sub>Ω²、四旋翼控制輸入）；串級與 damper 概念見《飛行控制》p.2、p.5。控制器直接讀取真實狀態，感測器雜訊與濾波留到第 4 批。</p>
+
+<footer class="credit">© 2026 <a href="https://github.com/AdevLog" target="_blank" rel="noopener">AdevLog</a> · <a href="https://github.com/AdevLog/drone-sim/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a><span id="originNote" hidden> · 原始版本：<a href="https://adevlog.github.io/drone-sim/" target="_blank" rel="noopener">adevlog.github.io/drone-sim</a></span></footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// === SIM-CORE-BEGIN ===
+// 純計算，不碰 DOM：可在 node 中單獨測試。
+const DEG = Math.PI / 180;
+const PHYS = {
+  g: 9.81, m: 1.5, arm: 0.25,              // 質量 kg、軸距半長 m
+  Ix: 0.029, Iy: 0.029, Iz: 0.055,         // 轉動慣量 kg·m²
+  kT: 9e-6,                                 // 推力係數 T = kT·Ω²
+  cQ: 0.05,                                 // 反扭力/推力比 Q = cQ·T（m）
+  wMax: 1000, tau: 0.03, Tmin: 0.1, drag: 0.25,
+};
+PHYS.d = PHYS.arm / Math.SQRT2;
+PHYS.Tmax = PHYS.kT * PHYS.wMax * PHYS.wMax;
+PHYS.Thover = PHYS.m * PHYS.g / 4;
+PHYS.wHover = Math.sqrt(PHYS.Thover / PHYS.kT);
+// 控制器正規化輸出 u ∈ [-1, 1] 對應的力矩：兩顆全速、兩顆停轉
+const TAU_SCALE = [2 * PHYS.d * PHYS.Tmax, 2 * PHYS.d * PHYS.Tmax, 2 * PHYS.cQ * PHYS.Tmax];
+// PX4 Quad X 編號；機體座標 FRD（x 前、y 右、z 下）；s = +1 為逆時針（CCW）
+const MOTORS = [
+  { name: 'M1', pos: '右前', x: 1, y: 1, s: 1 },
+  { name: 'M2', pos: '左後', x: -1, y: -1, s: 1 },
+  { name: 'M3', pos: '左前', x: 1, y: -1, s: -1 },
+  { name: 'M4', pos: '右後', x: -1, y: 1, s: -1 },
+];
+// 通道編號：0 roll、1 pitch、2 yaw、3 油門（高度）
+const CH = { roll: 0, pitch: 1, yaw: 2, thr: 3, pos: 4 };
+const AXIS_IDX = { roll: 0, pitch: 1, yaw: 2 };
+const PARAM_DEFS = {
+  roll: [
+    { id: 'MC_ROLL_P', loop: 'outer', min: 0, max: 15, step: 0.1, def: 6.5, desc: '角度誤差 → 角速度命令（1/s）' },
+    { id: 'MC_ROLLRATE_P', loop: 'inner', min: 0, max: 0.6, step: 0.005, def: 0.15, desc: '角速度誤差 → 力矩：主要修正力' },
+    { id: 'MC_ROLLRATE_I', loop: 'inner', min: 0, max: 1, step: 0.01, def: 0.2, desc: '累積誤差：消除長期偏差' },
+    { id: 'MC_ROLLRATE_D', loop: 'inner', min: 0, max: 0.02, step: 0.0005, def: 0.003, desc: '角速度變化率：抑制振盪' },
+  ],
+  pitch: [
+    { id: 'MC_PITCH_P', loop: 'outer', min: 0, max: 15, step: 0.1, def: 6.5, desc: '角度誤差 → 角速度命令（1/s）' },
+    { id: 'MC_PITCHRATE_P', loop: 'inner', min: 0, max: 0.6, step: 0.005, def: 0.15, desc: '角速度誤差 → 力矩：主要修正力' },
+    { id: 'MC_PITCHRATE_I', loop: 'inner', min: 0, max: 1, step: 0.01, def: 0.2, desc: '累積誤差：消除長期偏差' },
+    { id: 'MC_PITCHRATE_D', loop: 'inner', min: 0, max: 0.02, step: 0.0005, def: 0.003, desc: '角速度變化率：抑制振盪' },
+  ],
+  yaw: [
+    { id: 'MC_YAW_P', loop: 'outer', min: 0, max: 10, step: 0.1, def: 2.8, desc: '航向誤差 → 偏航角速度命令（1/s）' },
+    { id: 'MC_YAWRATE_P', loop: 'inner', min: 0, max: 1, step: 0.01, def: 0.2, desc: '偏航角速度誤差 → 反扭力矩' },
+    { id: 'MC_YAWRATE_I', loop: 'inner', min: 0, max: 1, step: 0.01, def: 0.1, desc: '累積誤差：消除長期偏差' },
+    { id: 'MC_YAWRATE_D', loop: 'inner', min: 0, max: 0.05, step: 0.001, def: 0, desc: '角速度變化率：yaw 通常不用' },
+  ],
+  pos: [
+    { id: 'MPC_XY_P', loop: 'outer', min: 0, max: 4, step: 0.05, def: 0.95, desc: '位置誤差 → 水平速度命令（1/s）' },
+    { id: 'MPC_XY_VEL_P_ACC', loop: 'inner', min: 0, max: 6, step: 0.05, def: 1.8, desc: '水平速度誤差 → 水平加速度命令' },
+    { id: 'MPC_XY_VEL_I_ACC', loop: 'inner', min: 0, max: 3, step: 0.05, def: 0.4, desc: '累積誤差：抵抗持續的偏移（例如風）' },
+    { id: 'MPC_XY_VEL_D_ACC', loop: 'inner', min: 0, max: 1, step: 0.02, def: 0.2, desc: '速度變化率：抑制煞車時的晃動' },
+  ],
+  thr: [
+    { id: 'MPC_Z_P', loop: 'outer', min: 0, max: 5, step: 0.05, def: 1.0, desc: '高度誤差 → 垂直速度命令（1/s）' },
+    { id: 'MPC_Z_VEL_P_ACC', loop: 'inner', min: 0, max: 15, step: 0.1, def: 4.0, desc: '垂直速度誤差 → 加速度命令' },
+    { id: 'MPC_Z_VEL_I_ACC', loop: 'inner', min: 0, max: 8, step: 0.1, def: 2.0, desc: '累積誤差：補足重力與偏差' },
+    { id: 'MPC_Z_VEL_D_ACC', loop: 'inner', min: 0, max: 2, step: 0.05, def: 0.0, desc: '加速度變化：通常不用' },
+  ],
+};
+const RATE_MAX = [220 * DEG, 220 * DEG, 200 * DEG];   // MC_ROLLRATE_MAX 等
+const VZ_MAX_UP = 3, VZ_MAX_DN = 1.5;                  // MPC_Z_VEL_MAX_UP / DN
+const HOVER_ALT = { att: 2, thr: 3 };
+const DT = 0.001, CTRL_EVERY = 4, LOG_EVERY = 10;      // 物理 1 kHz、控制 250 Hz、記錄 100 Hz
+const DCUT_HZ = 30;                                    // MC_DTERM_CUTOFF
+const TILT_MIN = 0.5;                                  // 傾斜補償上限：cos 不小於 0.5（約 60°）
+// 自由飛行（第 3 批）
+const FLY = {
+  manTilt: 35 * DEG,        // MPC_MAN_TILT_MAX：Stabilized / Altitude 搖桿全推的傾斜角
+  posTilt: 45 * DEG,        // MPC_TILTMAX_AIR：Position 模式位置控制器可用的最大傾斜
+  acroRate: 220 * DEG,      // Acro 搖桿全推的 roll / pitch 角速度
+  yawRate: 150 * DEG,       // MPC_MAN_Y_MAX：yaw 搖桿全推的偏航角速度
+  velMan: 5,                // Position 模式搖桿全推的水平速度（PX4 MPC_VEL_MANUAL 預設 10，這裡縮小方便觀察）
+  dz: 0.08,                 // 搖桿死區
+  armHold: 1.0,             // 搖桿解鎖 / 上鎖需維持的秒數（COM_RC_ARM_HYST）
+  armZone: 0.6,             // 解鎖角落區域門檻（兩軸都要超過）
+  disarmLand: 2,            // 落地後自動上鎖（COM_DISARM_LAND）
+  disarmPreflt: 10,         // 解鎖後一直沒起飛的自動上鎖（COM_DISARM_PRFLT）
+  crashV: 3, crashCos: 0.5, // 落地速度 > 3 m/s 或傾斜 > 60° 視為墜機
+};
+const FLIGHT_MODES = ['acro', 'stab', 'alt', 'pos'];
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const wrapPi = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+
+// 操控手感：同一套控制器，兩組預設值。切換觀察軸或鏡頭時參數回到該手感的預設值（本專案目的是看參數的影響，不保存調好的值）。
+// 消費級的數值是為了考照練習挑的平順手感，不是 DJI 實測值。
+const PROFILES = {
+  px4: {
+    name: 'PX4 預設',
+    stick: { velMan: 5, vzUp: 3, vzDn: 1.5, yawRate: 150 * DEG, manTilt: 35 * DEG, accHor: Infinity, expo: 0 },
+    params: {},
+  },
+  consumer: {
+    name: '消費級',
+    stick: { velMan: 3, vzUp: 1.5, vzDn: 1, yawRate: 60 * DEG, manTilt: 25 * DEG, accHor: 4, expo: 0.4 },
+    params: {
+      roll: { MC_ROLL_P: 5, MC_ROLLRATE_P: 0.12, MC_ROLLRATE_I: 0.15 },
+      pitch: { MC_PITCH_P: 5, MC_PITCHRATE_P: 0.12, MC_PITCHRATE_I: 0.15 },
+      yaw: { MC_YAW_P: 2.0 },
+      pos: { MPC_XY_P: 0.8, MPC_XY_VEL_P_ACC: 2.2, MPC_XY_VEL_I_ACC: 0.4, MPC_XY_VEL_D_ACC: 0.2 },
+      thr: { MPC_Z_VEL_P_ACC: 3.0, MPC_Z_VEL_I_ACC: 1.5 },
+    },
+  },
+};
+function paramDefault(profile, ax, d) {
+  const o = PROFILES[profile || 'px4'].params[ax];
+  return o && o[d.id] !== undefined ? o[d.id] : d.def;
+}
+function defaultParams(profile) {
+  const p = {};
+  for (const ax in PARAM_DEFS) { p[ax] = {}; for (const d of PARAM_DEFS[ax]) p[ax][d.id] = paramDefault(profile, ax, d); }
+  return p;
+}
+// 預設振幅（顯示單位）：串級 = 角度/高度命令，只開內迴圈 = 角速度/垂直速度命令
+const AMP_DEFS = {
+  roll: { cascade: { def: 15, min: 0, max: 45, step: 1, unit: '°' }, inner: { def: 90, min: 0, max: 300, step: 5, unit: '°/s' } },
+  pitch: { cascade: { def: 15, min: 0, max: 45, step: 1, unit: '°' }, inner: { def: 90, min: 0, max: 300, step: 5, unit: '°/s' } },
+  yaw: { cascade: { def: 30, min: 0, max: 90, step: 1, unit: '°' }, inner: { def: 60, min: 0, max: 200, step: 5, unit: '°/s' } },
+  thr: { cascade: { def: 1, min: 0, max: 3, step: 0.1, unit: 'm' }, inner: { def: 1, min: 0, max: 3, step: 0.1, unit: 'm/s' } },
+};
+const PERIOD_DEFS = { roll: 4, pitch: 4, yaw: 6, thr: 10 };
+
+// 機體 → 導航座標的旋轉矩陣 Cbn（ZYX 尤拉角）
+function cbn(phi, th, psi) {
+  const cf = Math.cos(phi), sf = Math.sin(phi), ct = Math.cos(th), st = Math.sin(th), cp = Math.cos(psi), sp = Math.sin(psi);
+  return [
+    [ct * cp, sf * st * cp - cf * sp, cf * st * cp + sf * sp],
+    [ct * sp, sf * st * sp + cf * cp, cf * st * sp - sf * cp],
+    [-st, sf * ct, cf * ct],
+  ];
+}
+// 四元數 q = [w, x, y, z]（機體 → NED）
+function quatToC(q) {
+  const [w, x, y, z] = q;
+  return [
+    [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+    [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+    [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+  ];
+}
+function cToEuler(C) {
+  return [Math.atan2(C[2][1], C[2][2]), -Math.asin(clamp(C[2][0], -1, 1)), Math.atan2(C[1][0], C[0][0])];
+}
+
+function createSim() {
+  const S = {
+    axis: 'roll',          // roll | pitch | yaw | thr | att3 | fly
+    fmode: 'stab',         // 自由飛行模式：acro | stab | alt | pos
+    sticks: { roll: 0, pitch: 0, yaw: 0, thr: -1 },   // 搖桿 −1 ~ +1（油門 −1 = 最低）
+    focus: 'roll',         // 方塊圖與參數面板顯示的通道
+    cascade: true, wave: 'square', amp: 15, period: 4, ff: true,
+    waveAxis: 'roll',      // 三軸模式：波形套用在哪一軸（roll | pitch | yaw | thr | none）
+    manual: [0, 0, 0],     // 三軸模式：手動姿態命令（° 或 °/s）
+    altHold: true, tiltComp: false,
+    profile: 'px4',
+    params: defaultParams('px4'),
+  };
+  S.isAtt3 = () => S.axis === 'att3';
+  S.metricAxis = () => (S.isAtt3() ? (S.waveAxis === 'none' ? null : S.waveAxis) : S.axis);
+  S.isFly = () => S.axis === 'fly';
+  S.stickCfg = () => PROFILES[S.profile].stick;
+  S.setProfile = (name) => { S.profile = name; S.params = defaultParams(name); };
+  S.thrActive = () => S.axis === 'thr' || (S.isAtt3() && S.altHold) || (S.isFly() && (S.fmode === 'alt' || S.fmode === 'pos'));
+  // 起飛前自檢（飛控鎖）：保留的檢查點，目前沒有項目，回傳不通過的原因清單
+  S.preArmChecks = () => [];
+
+  S.reset = function () {
+    const h = S.isFly() ? 0 : (S.axis === 'thr' || S.isAtt3()) ? HOVER_ALT.thr : HOVER_ALT.att;
+    S.t = 0; S.k = 0;
+    S.pos = [0, 0, -h]; S.vel = [0, 0, 0];
+    S.q = [1, 0, 0, 0]; S.C = quatToC(S.q); S.eul = [0, 0, 0]; S.w = [0, 0, 0]; S.wdot = [0, 0, 0];
+    S.Om = [0, 0, 0, 0].map(() => PHYS.wHover);
+    S.wCmd = S.Om.slice(); S.pwm = S.Om.map((o) => 1000 + 1000 * o / PHYS.wMax);
+    S.T = S.Om.map((o) => PHYS.kT * o * o); S.sat = [false, false, false, false];
+    S.ch = [0, 1, 2, 3].map(() => ({ integ: 0, prev: 0, dFilt: 0, eOuter: 0, r: 0, inner: { cmd: 0, meas: 0, e: 0, p: 0, i: 0, d: 0, u: 0 } }));
+    S.Fcmd = PHYS.m * PHYS.g; S.Fbase = S.Fcmd; S.tilt = 1;
+    S.tauCmd = [0, 0, 0]; S.tauAct = [0, 0, 0]; S.Fact = PHYS.m * PHYS.g; S.couple = [0, 0, 0];
+    S.kick = 0; S.kickCh = 0;
+    // 自由飛行狀態
+    const fly = S.isFly();
+    S.armed = !fly; S.armTimer = 0; S.armMsg = ''; S.landed = fly; S.hasFlown = false; S.landTime = 0; S.armedTime = 0;
+    S.crashed = false; S.crashInfo = '';
+    S.yawSp = 0; S.altLock = fly ? 0 : null;
+    S.pc = { integ: [0, 0], prev: [0, 0], dFilt: [0, 0], vsp: [0, 0], psp: fly ? [0, 0] : null, e: [0, 0], ep: [0, 0], p: [0, 0], d: [0, 0], acc: [0, 0], tiltLim: false, src: 'hold' };
+    S.thrFrac = 0; S.aUp = 0;
+    if (fly) { S.Om = [0, 0, 0, 0]; S.wCmd = [0, 0, 0, 0]; S.pwm = [1000, 1000, 1000, 1000]; S.T = [0, 0, 0, 0]; S.Fcmd = 0; S.Fact = 0; }
+    S.log = []; S.segs = []; S.curSeg = null; S.lastCmd = null;
+  };
+
+  // 波形偏移（顯示單位）
+  S.waveOffset = function (t) {
+    if (t < 0.5) return 0;
+    const tt = t - 0.5, A = S.amp;
+    if (S.wave === 'step') return A;
+    if (S.wave === 'sine') return A * Math.sin(2 * Math.PI * tt / S.period);
+    return ((tt % S.period) / S.period) < 0.5 ? A : -A;
+  };
+  // 某通道的命令（SI 單位：rad、rad/s、m、m/s）
+  S.cmdFor = function (name, t) {
+    const hasWave = S.isAtt3() ? S.waveAxis === name : S.axis === name;
+    const w = hasWave ? S.waveOffset(t) : 0;
+    if (name === 'thr') return (S.cascade ? HOVER_ALT.thr : 0) + w;
+    const man = S.isAtt3() ? S.manual[AXIS_IDX[name]] : 0;
+    return (man + w) * DEG;
+  };
+  S.kickNow = function () { S.kick = 0.12; S.kickCh = CH[S.focus]; };
+
+  function attCtrl(name, dtc, alpha, rOv, cascadeOv) {
+    const k = AXIS_IDX[name], c = S.ch[k];
+    const P = S.params[name], ids = PARAM_DEFS[name].map((d) => d.id);
+    const r = rOv !== undefined ? rOv : S.cmdFor(name, S.t); c.r = r;
+    const cascade = cascadeOv !== undefined ? cascadeOv : S.cascade;
+    c.cascade = cascade;
+    const ang = S.eul[k], rate = S.w[k];
+    let rateCmd;
+    if (cascade) { c.eOuter = wrapPi(r - ang); rateCmd = clamp(P[ids[0]] * c.eOuter, -RATE_MAX[k], RATE_MAX[k]); }
+    else { c.eOuter = 0; rateCmd = r; }
+    const e = rateCmd - rate;
+    const dm = (rate - c.prev) / dtc; c.prev = rate; c.dFilt += alpha * (dm - c.dFilt);
+    c.integ = clamp(c.integ + P[ids[2]] * e * dtc, -0.3, 0.3);   // MC_RR_INT_LIM = 0.3
+    const pT = P[ids[1]] * e, dT = -P[ids[3]] * c.dFilt;
+    const u = clamp(pT + c.integ + dT, -1, 1);
+    S.tauCmd[k] = u * TAU_SCALE[k];
+    c.inner = { cmd: rateCmd, meas: rate, e, p: pT, i: c.integ, d: dT, u };
+  }
+  function thrCtrl(dtc, alpha, vzOv) {
+    const c = S.ch[3], P = S.params.thr;
+    const h = -S.pos[2], vz = -S.vel[2];
+    let vzCmd;
+    if (vzOv !== undefined) {           // 自由飛行：搖桿直接給垂直速度，或放開後鎖高度
+      if (vzOv === null) { c.r = S.altLock; c.eOuter = S.altLock - h; vzCmd = clamp(P.MPC_Z_P * c.eOuter, -VZ_MAX_DN, VZ_MAX_UP); c.cascade = true; }
+      else { c.r = NaN; c.eOuter = 0; vzCmd = vzOv; c.cascade = false; }
+    } else {
+      const r = S.cmdFor('thr', S.t); c.r = r; c.cascade = S.cascade;
+      if (S.cascade) { c.eOuter = r - h; vzCmd = clamp(P.MPC_Z_P * c.eOuter, -VZ_MAX_DN, VZ_MAX_UP); }
+      else { c.eOuter = 0; vzCmd = r; }
+    }
+    const e = vzCmd - vz;
+    const acc = (vz - c.prev) / dtc; c.prev = vz; c.dFilt += alpha * (acc - c.dFilt);
+    c.integ = clamp(c.integ + P.MPC_Z_VEL_I_ACC * e * dtc, -15, 15);
+    const pT = P.MPC_Z_VEL_P_ACC * e, dT = -P.MPC_Z_VEL_D_ACC * c.dFilt;
+    const a = pT + c.integ + dT;
+    c.inner = { cmd: vzCmd, meas: vz, e, p: pT, i: c.integ, d: dT, u: a };
+    return a;
+  }
+
+  // 油門搖桿 → 推力比例：中點對應懸停推力（PX4 MPC_THR_CURVE 預設的做法）
+  S.thrHover = PHYS.m * PHYS.g / (4 * PHYS.Tmax);
+  S.mapThrottle = (s) => (s <= 0 ? S.thrHover * (s + 1) : S.thrHover + (1 - S.thrHover) * s);
+  const dz0 = (v) => (Math.abs(v) < FLY.dz ? 0 : (v - Math.sign(v) * FLY.dz) / (1 - FLY.dz));
+  // 死區後再套搖桿曲線（expo）：中間較鈍、推到底才快；expo = 0 為線性
+  const dzf = (v) => { const x = dz0(v), e = S.stickCfg().expo; return (1 - e) * x + e * x * x * x; };
+
+  function resetIntegrators() {
+    S.ch.forEach((c) => { c.integ = 0; });
+    S.pc.integ = [0, 0];
+  }
+  // 遙控解鎖：左搖桿在右下角區域（油門 < −0.6 且 yaw > +0.6）維持 1 秒；左下角區域維持 1 秒上鎖。
+  // 門檻用 0.6：手把搖桿是圓形外框，推到斜角時兩軸各只有約 0.7，達不到 0.9。
+  function arming(dtc) {
+    const st = S.sticks, low = st.thr < -FLY.armZone;
+    const wantArm = !S.armed && low && st.yaw > FLY.armZone, wantDisarm = S.armed && low && st.yaw < -FLY.armZone;
+    if (wantArm || wantDisarm) S.armTimer += dtc; else S.armTimer = 0;
+    if (wantArm && S.armTimer >= FLY.armHold) { S.armTimer = 0; S.tryArm(); }
+    if (wantDisarm && S.armTimer >= FLY.armHold) {
+      S.armTimer = 0;
+      if (S.landed) S.disarm('搖桿上鎖'); else S.armMsg = '空中不能用搖桿上鎖';
+    }
+    if (S.armed) {
+      S.armedTime += dtc;
+      if (S.landed && S.hasFlown) { S.landTime += dtc; if (S.landTime > FLY.disarmLand) S.disarm('落地自動上鎖'); }
+      else S.landTime = 0;
+      if (S.landed && !S.hasFlown && S.armedTime > FLY.disarmPreflt && low) S.disarm('解鎖後未起飛，自動上鎖');
+    }
+  }
+  S.tryArm = function () {
+    if (!S.isFly()) return false;
+    if (S.crashed) { S.armMsg = '墜機後請先重設'; return false; }
+    if (!S.landed) { S.armMsg = '只能在地面解鎖'; return false; }
+    if (S.sticks.thr > -FLY.armZone) { S.armMsg = '油門要拉到底才能解鎖'; return false; }
+    const fails = S.preArmChecks();
+    if (fails.length) { S.armMsg = '自檢未通過：' + fails.join('、'); return false; }
+    S.armed = true; S.armedTime = 0; S.hasFlown = false; S.landTime = 0; S.armMsg = '已解鎖';
+    S.yawSp = S.eul[2]; S.altLock = -S.pos[2]; S.pc.psp = [S.pos[0], S.pos[1]]; resetIntegrators();
+    return true;
+  };
+  S.disarm = function (why) { S.armed = false; S.armMsg = why || '已上鎖'; S.armTimer = 0; };
+
+  function flyCtrl(dtc, alpha) {
+    arming(dtc);
+    S.tauCmd = [0, 0, 0];
+    if (!S.armed) {                                   // 上鎖：馬達停轉
+      S.wCmd = [0, 0, 0, 0]; S.pwm = [1000, 1000, 1000, 1000]; S.sat = [false, false, false, false];
+      S.Fcmd = 0; S.Fbase = 0; resetIntegrators(); S.yawSp = S.eul[2];
+      return;
+    }
+    const st = S.sticks, fm = S.fmode, SC = S.stickCfg();
+    const sr = dzf(st.roll), sp = dzf(st.pitch), sy = dzf(st.yaw), stt = st.thr;
+    if (S.landed) { resetIntegrators(); S.yawSp = S.eul[2]; }   // 地面上積分歸零（PX4 也這樣做）
+    else S.yawSp = wrapPi(S.yawSp + sy * SC.yawRate * dtc);
+    // 垂直
+    let F;
+    if (fm === 'acro' || fm === 'stab') {
+      S.thrFrac = S.mapThrottle(stt);
+      F = S.thrFrac * 4 * PHYS.Tmax; S.aUp = NaN;
+      S.ch[3].inner = { cmd: NaN, meas: -S.vel[2], e: 0, p: 0, i: 0, d: 0, u: 0 }; S.ch[3].r = NaN;
+    } else {
+      const sv = dzf(stt), vz = -S.vel[2];
+      let vzOv;
+      if (sv !== 0) { vzOv = sv > 0 ? sv * SC.vzUp : sv * SC.vzDn; S.altLock = null; }
+      else if (S.altLock === null) { vzOv = 0; if (Math.abs(vz) < 0.2) S.altLock = -S.pos[2]; }
+      else vzOv = null;
+      S.aUp = thrCtrl(dtc, alpha, vzOv);
+    }
+    // 水平
+    let rollSp, pitchSp;
+    if (fm === 'pos') {
+      const pc = S.pc, Pp = S.params.pos, psi = S.eul[2], c = Math.cos(psi), s = Math.sin(psi);
+      const active = sr !== 0 || sp !== 0, v = [S.vel[0], S.vel[1]];
+      let tgt;
+      if (active) {
+        tgt = [(sp * c - sr * s) * SC.velMan, (sp * s + sr * c) * SC.velMan];   // 機頭座標 → NED
+        pc.psp = null; pc.src = 'stick'; pc.ep = [0, 0];
+      } else if (pc.psp === null) {
+        tgt = [0, 0]; pc.src = 'brake'; pc.ep = [0, 0];
+        if (Math.hypot(v[0], v[1]) < 0.3 && Math.hypot(...pc.vsp) < 0.3) pc.psp = [S.pos[0], S.pos[1]];
+      } else {
+        pc.ep = [pc.psp[0] - S.pos[0], pc.psp[1] - S.pos[1]];
+        tgt = pc.ep.map((e) => Pp.MPC_XY_P * e);
+        const n = Math.hypot(...tgt); if (n > SC.velMan) tgt = tgt.map((x) => x * SC.velMan / n);
+        pc.src = 'hold';
+      }
+      // 加減速限制（消費級）：速度命令最多以 accHor 變化，放開搖桿時平順煞停
+      const dvx = tgt[0] - pc.vsp[0], dvy = tgt[1] - pc.vsp[1], dvn = Math.hypot(dvx, dvy), step = SC.accHor * dtc;
+      pc.vsp = dvn > step ? [pc.vsp[0] + dvx * step / dvn, pc.vsp[1] + dvy * step / dvn] : tgt;
+      for (let i = 0; i < 2; i++) {
+        pc.e[i] = pc.vsp[i] - v[i];
+        const dv = (v[i] - pc.prev[i]) / dtc; pc.prev[i] = v[i]; pc.dFilt[i] += alpha * (dv - pc.dFilt[i]);
+        if (!S.landed) pc.integ[i] = clamp(pc.integ[i] + Pp.MPC_XY_VEL_I_ACC * pc.e[i] * dtc, -5, 5);
+        pc.p[i] = Pp.MPC_XY_VEL_P_ACC * pc.e[i]; pc.d[i] = -Pp.MPC_XY_VEL_D_ACC * pc.dFilt[i];
+        pc.acc[i] = pc.p[i] + pc.integ[i] + pc.d[i];
+      }
+      // 加速度命令 → 傾斜角：推力向量要同時提供水平加速度與 g + a_up
+      // 垂直加速度命令可能接近自由落體（例如急停爬升），推力不能小於 0.1 g，否則傾斜角無法定義（PX4 也有最小推力 MPC_THR_MIN）
+      const up = Math.max(0.1 * PHYS.g, PHYS.g + (Number.isFinite(S.aUp) ? S.aUp : 0));
+      let aF = pc.acc[0] * c + pc.acc[1] * s, aR = -pc.acc[0] * s + pc.acc[1] * c;
+      const aMax = up * Math.tan(FLY.posTilt), aH = Math.hypot(aF, aR);
+      pc.tiltLim = aH > aMax && aH > 1e-9; if (pc.tiltLim) { aF *= aMax / aH; aR *= aMax / aH; }
+      pitchSp = -Math.atan2(aF, up); rollSp = Math.atan2(aR * Math.cos(pitchSp), up);
+      pc.aFR = [aF, aR];
+      F = PHYS.m * Math.hypot(aF, aR, up);
+    } else if (fm === 'alt') {
+      rollSp = sr * SC.manTilt; pitchSp = -sp * SC.manTilt;
+    } else { rollSp = sr * SC.manTilt; pitchSp = -sp * SC.manTilt; }
+    if (fm === 'alt') {
+      S.tilt = Math.max(S.C[2][2], TILT_MIN);
+      F = PHYS.m * (PHYS.g + S.aUp) / S.tilt;          // 定高模式含傾斜補償
+    }
+    // 姿態
+    if (fm === 'acro') {
+      attCtrl('roll', dtc, alpha, sr * FLY.acroRate, false);
+      attCtrl('pitch', dtc, alpha, -sp * FLY.acroRate, false);
+      attCtrl('yaw', dtc, alpha, sy * SC.yawRate, false);
+    } else {
+      attCtrl('roll', dtc, alpha, rollSp, true);
+      attCtrl('pitch', dtc, alpha, pitchSp, true);
+      attCtrl('yaw', dtc, alpha, S.yawSp, true);
+    }
+    S.Fbase = F;
+    S.Fcmd = clamp(F, 0, 4 * PHYS.Tmax);
+    mix();
+  }
+
+  function control(dtc) {
+    const alpha = dtc / (dtc + 1 / (2 * Math.PI * DCUT_HZ));
+    if (S.isFly()) { flyCtrl(dtc, alpha); return; }
+    S.tauCmd = [0, 0, 0];
+    const names = S.isAtt3() ? ['roll', 'pitch', 'yaw'] : (S.axis === 'thr' ? [] : [S.axis]);
+    for (const nm of names) attCtrl(nm, dtc, alpha);
+    let F;
+    if (S.thrActive()) { const a = thrCtrl(dtc, alpha); F = PHYS.m * ((S.ff ? PHYS.g : 0) + a); }
+    else { F = PHYS.m * PHYS.g; S.ch[3].inner = { cmd: 0, meas: -S.vel[2], e: 0, p: 0, i: 0, d: 0, u: 0 }; S.ch[3].r = -S.pos[2]; }
+    S.Fbase = F;
+    S.tilt = Math.max(S.C[2][2], TILT_MIN);       // cosφ·cosθ
+    if (S.isAtt3() && S.tiltComp) F /= S.tilt;     // 傾斜補償：讓推力的垂直分量維持不變
+    S.Fcmd = clamp(F, 0, 4 * PHYS.Tmax);
+    mix();
+  }
+
+  // Mixer：總推力 + 三軸力矩 → 四顆馬達推力 → 轉速命令 → PWM
+  function mix() {
+    const [L, M, N] = S.tauCmd, F = S.Fcmd, d = PHYS.d;
+    MOTORS.forEach((m, i) => {
+      let T = F / 4 - m.y * L / (4 * d) + m.x * M / (4 * d) + m.s * N / (4 * PHYS.cQ);
+      S.sat[i] = T < PHYS.Tmin || T > PHYS.Tmax;
+      T = clamp(T, PHYS.Tmin, PHYS.Tmax);
+      S.wCmd[i] = Math.sqrt(T / PHYS.kT);
+      S.pwm[i] = 1000 + 1000 * S.wCmd[i] / PHYS.wMax;   // 假設 ESC 把脈寬線性對應到轉速
+    });
+  }
+
+  function physics(dt) {
+    const ax = S.axis;
+    let F = 0, L = 0, M = 0, N = 0;
+    MOTORS.forEach((m, i) => {
+      S.Om[i] += (S.wCmd[i] - S.Om[i]) * dt / PHYS.tau;   // 馬達一階延遲
+      const T = PHYS.kT * S.Om[i] * S.Om[i];
+      S.T[i] = T; F += T;
+      L += -m.y * PHYS.d * T; M += m.x * PHYS.d * T; N += m.s * PHYS.cQ * T;
+    });
+    let distF = 0, distE = 0;
+    if (S.kick > 0) {
+      if (S.kickCh === 3) distF = 18;
+      else if (S.kickCh === 4) distE = 15;
+      else if (S.kickCh === 0) L += 0.8; else if (S.kickCh === 1) M += 0.8; else N += 0.25;
+      S.kick -= dt;
+    }
+    S.Fact = F; S.tauAct = [L, M, N];
+    // 尤拉方程式（主軸系，含陀螺耦合項）
+    const [p, q, r] = S.w;
+    S.couple = [(PHYS.Iy - PHYS.Iz) * q * r, (PHYS.Iz - PHYS.Ix) * p * r, (PHYS.Ix - PHYS.Iy) * p * q];
+    S.wdot = [(S.couple[0] + L) / PHYS.Ix, (S.couple[1] + M) / PHYS.Iy, (S.couple[2] + N) / PHYS.Iz];
+    S.w = [p + S.wdot[0] * dt, q + S.wdot[1] * dt, r + S.wdot[2] * dt];
+    // 測試架鎖定
+    if (ax === 'thr') S.w = [0, 0, 0];
+    else if (ax !== 'att3' && ax !== 'fly') { const k = AXIS_IDX[ax]; for (let j = 0; j < 3; j++) if (j !== k) { S.w[j] = 0; S.wdot[j] = 0; } }
+    // 姿態：四元數積分 q̇ = ½ q ⊗ (0, ω)，避免尤拉角在 ±90° 奇異
+    const [qw, qx, qy, qz] = S.q, [wx, wy, wz] = S.w, h = 0.5 * dt;
+    const nq = [
+      qw + h * (-qx * wx - qy * wy - qz * wz),
+      qx + h * (qw * wx + qy * wz - qz * wy),
+      qy + h * (qw * wy - qx * wz + qz * wx),
+      qz + h * (qw * wz + qx * wy - qy * wx),
+    ];
+    const nn = Math.hypot(...nq); S.q = nq.map((v) => v / nn);
+    S.C = quatToC(S.q); S.eul = cToEuler(S.C);
+    // 平移
+    if (ax === 'fly') {
+      const m = PHYS.m, C = S.C;
+      const acc = [
+        (C[0][2] * -F) / m - PHYS.drag * S.vel[0],
+        (C[1][2] * -F + distE) / m - PHYS.drag * S.vel[1],
+        PHYS.g + (C[2][2] * -F + distF) / m - PHYS.drag * S.vel[2],
+      ];
+      for (let i = 0; i < 3; i++) { S.vel[i] += acc[i] * dt; S.pos[i] += S.vel[i] * dt; }
+      if (S.pos[2] >= 0) {                              // 接觸地面
+        if (!S.landed) {                                // 著陸瞬間：判斷是否墜機
+          const vImp = Math.max(0, S.vel[2]), cz = C[2][2];
+          if (vImp > FLY.crashV || cz < FLY.crashCos) {
+            S.crashed = true; S.armed = false;
+            S.crashInfo = vImp > FLY.crashV ? `落地速度 ${vImp.toFixed(1)} m/s（上限 ${FLY.crashV}）` : `落地時傾斜 ${(Math.acos(cz) / DEG).toFixed(0)}°`;
+            S.armMsg = '墜機';
+          }
+          S.landed = true; S.landTime = 0;
+        }
+        S.pos[2] = 0; S.vel = [0, 0, Math.min(0, S.vel[2])];
+        if (F * C[2][2] <= m * PHYS.g) {               // 推力不足以離地：機身擺平在地面上
+          const psi = S.eul[2]; S.q = [Math.cos(psi / 2), 0, 0, Math.sin(psi / 2)];
+          S.C = quatToC(S.q); S.eul = cToEuler(S.C); S.w = [0, 0, 0];
+        }
+      } else if (S.landed && S.pos[2] < -0.05) { S.landed = false; S.hasFlown = true; }
+    } else if (ax === 'thr' || ax === 'att3') {
+      const az = PHYS.g + (S.C[2][2] * -F + distF) / PHYS.m - PHYS.drag * S.vel[2];
+      S.vel = [0, 0, S.vel[2] + az * dt];
+      S.pos = [0, 0, S.pos[2] + S.vel[2] * dt];
+      if (S.pos[2] > 0) { S.pos[2] = 0; if (S.vel[2] > 0) S.vel[2] = 0; }   // 地面
+    }
+  }
+
+  // 某通道的外/內迴圈訊號（顯示單位）
+  S.signals = function (name) {
+    if (name === 'thr') {
+      const c = S.ch[3];
+      const casc = S.isFly() ? c.cascade : S.cascade;
+      return { oc: casc && S.thrActive() ? c.r : NaN, om: -S.pos[2], ic: S.thrActive() ? c.inner.cmd : NaN, im: -S.vel[2] };
+    }
+    const k = AXIS_IDX[name], c = S.ch[k];
+    const casc = S.isFly() ? c.cascade !== false : S.cascade;
+    return { oc: casc ? c.r / DEG : NaN, om: S.eul[k] / DEG, ic: c.inner.cmd / DEG, im: S.w[k] / DEG };
+  };
+
+  function record() {
+    const row = { t: S.t };
+    if (S.isFly()) {
+      const acro = S.fmode === 'acro';
+      for (const nm of ['roll', 'pitch', 'yaw']) {
+        const k = AXIS_IDX[nm], s = S.signals(nm);
+        row['c' + k] = S.armed ? (acro ? NaN : s.oc) : NaN; row['a' + k] = s.om;
+      }
+      const sh = S.signals('thr'); row.hc = S.armed ? sh.oc : NaN; row.h = sh.om; row.spd = Math.hypot(S.vel[0], S.vel[1]);
+      row.mc = NaN; row.mm = NaN;
+      S.log.push(row); if (S.log.length > 900) S.log.shift();
+      S.curSeg = null; S.lastCmd = null;
+      return;
+    }
+    if (S.isAtt3()) {
+      for (const nm of ['roll', 'pitch', 'yaw']) {
+        const k = AXIS_IDX[nm], s = S.signals(nm);
+        row['c' + k] = S.cascade ? s.oc : s.ic; row['a' + k] = S.cascade ? s.om : s.im;
+      }
+      const sh = S.signals('thr'); row.hc = sh.oc; row.h = sh.om;
+    } else {
+      Object.assign(row, S.signals(S.axis));
+    }
+    // 指標用的命令與量測
+    const ma = S.metricAxis();
+    if (ma) { const s = S.signals(ma); row.mc = S.cascade ? s.oc : s.ic; row.mm = S.cascade ? s.om : s.im; }
+    else { row.mc = NaN; row.mm = NaN; }
+    S.log.push(row);
+    if (S.log.length > 900) S.log.shift();
+    // 步階區段
+    const cmd = row.mc, meas = row.mm;
+    if (!Number.isFinite(cmd)) { S.curSeg = null; S.lastCmd = null; return; }
+    if (S.lastCmd !== null && Math.abs(cmd - S.lastCmd) > 1e-6 && S.wave !== 'sine') {
+      if (S.curSeg && S.curSeg.from !== null) { S.segs.push(S.curSeg); if (S.segs.length > 4) S.segs.shift(); }
+      S.curSeg = { from: S.lastCmd, to: cmd, t0: S.t, y: [] };
+    }
+    if (!S.curSeg) S.curSeg = { from: null, to: cmd, t0: S.t, y: [] };
+    S.curSeg.y.push([S.t - S.curSeg.t0, meas, cmd]);
+    if (S.curSeg.y.length > 1200) S.curSeg.y.shift();
+    S.lastCmd = cmd;
+  }
+
+  S.step = function () {
+    if (S.k % CTRL_EVERY === 0) control(DT * CTRL_EVERY);
+    physics(DT);
+    if (S.k % LOG_EVERY === 0) record();
+    S.k++; S.t += DT;
+  };
+
+  S.reset();
+  return S;
+}
+
+// 步階響應指標
+function stepMetrics(seg) {
+  if (!seg || seg.from === null || seg.y.length < 10) return null;
+  const D = seg.to - seg.from;
+  if (Math.abs(D) < 1e-9) return null;
+  const ys = seg.y.map(([t, y]) => [t, (y - seg.from) / D]);
+  let t10 = null, t90 = null, peak = -Infinity, settle = 0;
+  for (const [t, n] of ys) {
+    if (t10 === null && n >= 0.1) t10 = t;
+    if (t90 === null && n >= 0.9) t90 = t;
+    if (n > peak) peak = n;
+    if (Math.abs(n - 1) > 0.05) settle = t;
+  }
+  const dur = ys[ys.length - 1][0];
+  const tail = seg.y.slice(Math.floor(seg.y.length * 0.85));
+  const ss = tail.reduce((a, [, y]) => a + (y - seg.to), 0) / tail.length;
+  return {
+    rise: (t10 !== null && t90 !== null) ? t90 - t10 : null,
+    overshoot: Math.max(0, (peak - 1) * 100),
+    settle: settle < dur - 0.05 ? settle : null,
+    ss, dur,
+  };
+}
+function sineMetrics(log) {
+  const rows = log.slice(-400).filter((r) => Number.isFinite(r.mc));
+  if (rows.length < 50) return null;
+  let se = 0, cmax = 0, mmax = 0;
+  const c0 = rows.reduce((a, r) => a + r.mc, 0) / rows.length;   // 扣掉基準值（例如高度 3 m）
+  for (const r of rows) {
+    se += (r.mc - r.mm) ** 2; cmax = Math.max(cmax, Math.abs(r.mc - c0)); mmax = Math.max(mmax, Math.abs(r.mm - c0));
+  }
+  return { rms: Math.sqrt(se / rows.length), cmax, mmax };
+}
+// === SIM-CORE-END ===
+
+// ================= UI =================
+// UI 由多個「模組區塊」組成，彼此不直接呼叫，只透過 bus 事件溝通（模組地圖與事件表見 ARCHITECTURE.md）。
+// 每個區塊開頭註明：依賴（會讀或呼叫的東西）、訂閱事件、提供（給別人用的東西）。
+// 想拆成多個檔案時，每個區塊就是一個模組；區塊內的 const X = (() => { ... })() 換成 export 即可。
+
+// ---------- [基礎] $、事件匯流排、共享狀態 ----------
+// 提供：$、bus、sim、app、DEBUG、CONFIG_EVENTS
+const $ = (id) => document.getElementById(id);
+const bus = (() => {
+  const subs = new Map();
+  return {
+    // 訂閱：可一次訂閱多個事件；回傳取消訂閱的函式
+    on(names, fn) {
+      [].concat(names).forEach((nm) => { if (!subs.has(nm)) subs.set(nm, []); subs.get(nm).push(fn); });
+      return () => [].concat(names).forEach((nm) => { const a = subs.get(nm); if (a) a.splice(a.indexOf(fn), 1); });
+    },
+    // 發出：依訂閱順序同步呼叫。訂閱者之間不應依賴先後順序
+    emit(name, payload) { (subs.get(name) || []).slice().forEach((fn) => fn(payload, name)); },
+  };
+})();
+const sim = createSim();
+// 多個模組共用、但不屬於模擬器的 UI 狀態
+const app = {
+  paused: false, speed: 1,
+  camMode: 'pilot',            // 自由飛行的鏡頭：pilot 飛手視角 | chase 追尾 | orbit 環繞
+};
+// 除錯與自動測試用：各模組把自己的內部狀態掛在這裡（瀏覽器主控台輸入 app_debug 可查看）
+const DEBUG = window.app_debug = { sim, bus, app };
+// 「設定改變」類事件：任何一個發生，靜態文字與彈出視窗都要重畫
+const CONFIG_EVENTS = ['sim:reset', 'mode:change', 'wave:change', 'focus:change', 'fmode:change', 'cam:change', 'profile:change', 'option:change'];
+
+// ---------- [資料] 說明文字 ----------
+// 提供：AXIS_INFO、FMODE_INFO、CH_NAME、WAVE_NOTE、EXAM（純資料，不依賴任何模組）
+const AXIS_INFO = {
+  roll: {
+    name: 'Roll 滾轉', rig: '滾轉測試架：只能繞前後軸轉',
+    outer: '角度', inner: '角速度', ou: '°', iu: '°/s', torque: 'L', plant: 'I<sub>x</sub>ṗ = L',
+    mix: '左側兩顆 ↑、右側兩顆 ↓ → 向右滾',
+    tips: [
+      '先看預設：洋紅方波是命令，青線是實際角度。注意上升有多快、有沒有過衝。',
+      '把 MC_ROLLRATE_P 調到 0.3：內迴圈變快，外迴圈的過衝幾乎消失。串級的原則是內迴圈要比外迴圈快好幾倍。',
+      '把 MC_ROLL_P 調到 14：外迴圈比內迴圈還急，過衝跳到 25% 以上。這就是「先調內、再調外」的原因。',
+      '切到「只開內迴圈」（等於 PX4 的 Acro 模式），把 MC_ROLLRATE_P 調到 0.45、D 調到 0：馬達延遲讓角速度過衝近 30%。再把 D 調到 0.008，看 D 項怎麼把振盪壓下來。',
+      '按「施加擾動」模擬一陣側風打在機翼上，看 I 項怎麼把角度拉回來。',
+    ],
+  },
+  pitch: {
+    name: 'Pitch 俯仰', rig: '俯仰測試架：只能繞左右軸轉',
+    outer: '角度', inner: '角速度', ou: '°', iu: '°/s', torque: 'M', plant: 'I<sub>y</sub>q̇ = M',
+    mix: '前方兩顆 ↑、後方兩顆 ↓ → 抬頭',
+    tips: [
+      '這台機架左右對稱（I<sub>x</sub> = I<sub>y</sub>），所以 pitch 和 roll 的反應幾乎一樣。',
+      '看馬達面板：pitch 改變的是前後兩組的轉速差，roll 改變的是左右兩組。',
+      '看 PFD：抬頭時地平線往下移，洋紅橫桿是俯仰命令。',
+    ],
+  },
+  yaw: {
+    name: 'Yaw 偏航', rig: '偏航測試架：只能繞垂直軸轉',
+    outer: '航向', inner: '偏航角速度', ou: '°', iu: '°/s', torque: 'N', plant: 'I<sub>z</sub>ṙ = N',
+    mix: '逆時針兩顆 ↑、順時針兩顆 ↓ → 機頭右轉',
+    tips: [
+      'yaw 靠螺旋槳的反扭力轉動，力矩只有 roll 的一小部分，而且 I<sub>z</sub> 較大，所以明顯比較慢。',
+      '比較：同樣的 P 值，yaw 的上升時間是 roll 的好幾倍。這就是 PX4 的 yaw 增益和 roll 不一樣的原因。',
+      '從上方看：M1、M2（逆時針）和 M3、M4（順時針）兩組轉速一高一低，總推力不變。',
+      '把 MC_YAWRATE_P 調到 0.6，看響應變快多少；再把 MC_YAW_P 調到 8，看外迴圈太急時的振盪。',
+    ],
+  },
+  thr: {
+    name: '油門 高度', rig: '高度滑軌：只能上下移動',
+    outer: '高度', inner: '垂直速度', ou: 'm', iu: 'm/s', torque: 'F', plant: 'm·ẇ = mg − F·cosφcosθ',
+    mix: '四顆一起 ↑ → 上升',
+    tips: [
+      '高度迴路的內迴圈命令是「加速度」，再換算成總推力 F = m(g + a)。',
+      '取消勾選「懸停推力前饋」並按重設：飛機一開始會往下掉，直到 I 項累積到足以抵抗重力。這就是前饋的價值。',
+      '前饋關閉時，把 MPC_Z_VEL_I_ACC 調大，看補償變快，但過衝也變大。',
+      '按「施加擾動」模擬一陣下沉氣流，觀察高度掉多少、多久回來。',
+    ],
+  },
+  att3: {
+    name: '三軸姿態', rig: '萬向節滑軌：三軸自由轉動、可上下移動，水平位置鎖住',
+    tips: [
+      '預設是 roll 方波 ±30°、高度保持開、傾斜補償關。看下方高度圖：每次傾斜高度都會掉約 20 cm，因為推力的垂直分量只剩 F·cosφ·cosθ。',
+      '勾選「傾斜補償」：總推力自動除以 cosφ·cosθ，掉高幾乎消失。PX4 的高度控制也有這一步。',
+      '再取消「高度保持」：總推力固定為 mg，一傾斜就一路往下掉到地面。',
+      '把波形改套用在 Yaw（±90°），手動 Roll 設 30°：pitch（綠線）沒有命令也會被帶偏 10° 以上。這是旋轉的耦合：傾斜時繞機體 z 軸轉，會同時改變俯仰。',
+      '同一個情境下打開馬達面板：四顆同時在處理 roll、yaw 和總推力，看 mixer 怎麼把三件事疊在一起。',
+    ],
+  },
+};
+AXIS_INFO.fly = {
+  name: '自由飛行', rig: '自由飛行：H 為起降點（原點）',
+  tips: [
+    '先用 Stabilized 起飛：左搖桿拉到右下 1 秒解鎖，再把油門推過中點。注意油門中點 = 懸停推力，放開右搖桿飛機會擺正，但會一直漂（沒有位置控制）。',
+    '切到 Altitude：油門搖桿置中就定高，推上 / 拉下變成爬升 / 下降速度。傾斜時高度不再掉，因為這個模式有傾斜補償。',
+    '切到 Position：右搖桿變成「水平速度」，放開就煞車並鎖住位置。點方塊圖的「位置 / 速度」看速度 PID 怎麼換成傾斜角。',
+    '在 Position 模式選「位置」參數，按「施加擾動」從側面推一下，看位置環把飛機拉回原點；把 MPC_XY_VEL_I_ACC 調成 0 再比較。',
+    '最後試 Acro：放開搖桿飛機不會擺正，只會停止旋轉。這是競速 FPV 的飛法，沒有姿態外迴圈。',
+    '降落：Altitude 或 Position 模式把油門拉到底，下降速度最快 1.5 m/s；落地 2 秒後自動上鎖。Stabilized 直接收油門會摔機（落地速度 > 3 m/s）。',
+  ],
+};
+AXIS_INFO.pos = {
+  name: '位置', outer: '位置', inner: '水平速度', ou: 'm', iu: 'm/s', torque: '', plant: '', mix: '',
+};
+const FMODE_INFO = {
+  acro: { name: 'Acro', note: '右搖桿 = roll / pitch 角速度，放開後保持當下姿態。油門直接控制推力（中點 = 懸停推力）。沒有姿態外迴圈，也沒有定高。' },
+  stab: { name: 'Stabilized', note: '右搖桿 = 傾斜角度，放開會自動擺正。油門直接控制推力。會隨慣性與重力漂移。' },
+  alt: { name: 'Altitude', note: '同 Stabilized，但油門搖桿變成爬升 / 下降速度，置中 = 定高，並有傾斜補償。' },
+  pos: { name: 'Position', note: '右搖桿 = 水平速度（以機頭方向為準），放開會煞車並鎖住位置。高度同 Altitude。' },
+};
+const CH_NAME = { roll: 'Roll', pitch: 'Pitch', yaw: 'Yaw', thr: '高度', pos: '位置' };
+const WAVE_NOTE = {
+  square: '方波：命令反覆上下跳，等於連續做很多次步階。邊調參數邊看效果最方便，指標取最近一次完整步階。',
+  step: '步階：命令只在 0.5 s 跳一次，看一次完整的反應過程，最適合讀指標。按「重設」重新觀察。',
+  sine: '正弦：命令平滑連續變化，看的是追不追得上。週期越短越難追，實際值會變小、落後（頻率響應）。',
+};
+
+// 考照場地常數（Exam 畫場地與計時、Camera 取飛手站位）
+// 場地座標：H 中心為原點，x = 右（東），y = 外（北，遠離飛手）。three 座標 = (x, 高度, −y)。
+// 依 AC107-005D 附錄 6 圖 9「基本級未達 2 公斤無人直昇機與多旋翼機測場示意圖」（p.232）量出。
+const EXAM = {
+  H: { x: 0, y: 0, r: 1 },
+  points: [{ n: 'P1', x: -6, y: 0 }, { n: 'P2', x: -6, y: 5 }, { n: 'P3', x: 6, y: 5 }, { n: 'P4', x: 6, y: 0 }],
+  bandOuter: [-7, 7, -1, 6], bandInner: [-5, 5, 1, 4],     // 容許帶：航線左右各 1 m（總寬 2 m）
+  field: [-7.5, 7.5, -6.5, 8.5],                             // 15 × 15 m 場地外框
+  pilot: { x: 0, y: -2.55, eye: 1.6 },                       // 飛手站位 P（H 後方 2.25 m 起，深 0.6 m）
+  hoverR: 1, hoverV: 0.5, hoverNeed: 5, hMin: 1, hMax: 2,
+};
+
+// ---------- [模式登錄表] 每個觀察模式的差異集中在這裡 ----------
+// 依賴：app（鏡頭模式）
+// 提供：MODES、KINDS、curMode()、curKind()
+// 新增一個模式：在 MODES 加一筆（kind 選既有的類型，或在 KINDS 加新類型），再到 SIM-CORE 支援該 axis。
+//   view   ：預設視角 [方位角°, 仰角°, 距離 m]（方位角 0 = 從南方往北看），可為函式
+//   rig    ：測試架樣式，對應 Rig 模組的 RIG_BUILDERS
+//   camY   ：環繞鏡頭的注視高度；'hover' = 測試架高度，數字 = 跟著飛機但不低於此值，'follow' = 跟著飛機
+const MODES = {
+  roll: { kind: 'single', view: [45, 15, 2.4], rig: { type: 'bar', axis: 'z' }, camY: 'hover' },
+  pitch: { kind: 'single', view: [45, 15, 2.4], rig: { type: 'bar', axis: 'x' }, camY: 'hover' },
+  yaw: { kind: 'single', view: [0, 86, 2.6], rig: { type: 'post' }, camY: 'hover' },
+  thr: { kind: 'single', view: [55, 10, 7.5], rig: { type: 'rails', off: 0.32 }, camY: 1.5 },
+  att3: { kind: 'att3', view: [35, 16, 2.8], rig: { type: 'rails', off: 0.48 }, camY: 0.6 },   // 三軸模式機體會轉，滑軌放遠一點
+  fly: { kind: 'fly', view: () => (app.camMode === 'chase' ? [0, 14, 4.5] : [35, 25, 9]), rig: { type: 'none' }, camY: 'follow' },   // 飛手視角不用 view，見 Camera 模組
+};
+// 模式類型：決定面板顯示哪些區塊、圖表畫什麼
+//   hide   ：要隱藏的元素 id
+//   multi  ：是否有「參數焦點」切換（多通道同時控制）
+//   chart(): 回傳 { c1, c2 } 兩張圖的標題、單位與曲線；legend() 回傳圖例 HTML
+const LEGEND_AX = () => [['--ax1', 'Roll'], ['--ax2', 'Pitch'], ['--ax3', 'Yaw']].map(([c, t]) => `<span><i style="background:var(${c})"></i>${t}</span>`).join('');
+const SERIES_AX = (colors) => [0, 1, 2].flatMap((k) => [
+  { key: 'c' + k, color: colors.ax[k], width: 1.3, dash: true },
+  { key: 'a' + k, color: colors.ax[k], width: 2 },
+]);
+const KINDS = {
+  single: {
+    axisLabel: '觀察軸（其他軸鎖在測試架上）',
+    show: { att3Box: false, flyCard: false, btnRefly: false, loopField: true, waveField: true, ampRow: true, metricsCard: true },
+    multi: false,
+    chartText: (fi) => ({ c1: [`外迴圈：${fi.outer}`, fi.ou], c2: [`內迴圈：${fi.inner}`, fi.iu],
+      legend: '<span><i style="background:var(--cmd-vivid)"></i>命令值</span><span><i style="background:var(--act-vivid)"></i>實際值</span>' }),
+    series: (colors) => ({
+      c1: [{ key: 'oc', color: colors.cmd, width: 1.6 }, { key: 'om', color: colors.act, width: 2 }],
+      c2: [{ key: 'ic', color: colors.cmd, width: 1.6 }, { key: 'im', color: colors.act, width: 2 }],
+    }),
+  },
+  att3: {
+    axisLabel: '模式（三軸自由轉動，水平位置鎖住）',
+    show: { att3Box: true, flyCard: false, btnRefly: false, loopField: true, waveField: true, ampRow: true, metricsCard: true },
+    multi: true,
+    chartText: () => ({ c1: [sim.cascade ? '三軸姿態角' : '三軸角速度', sim.cascade ? '°' : '°/s'], c2: ['高度（觀察傾斜造成的掉高）', 'm'],
+      legend: LEGEND_AX() + `<span><i class="dash" style="border-color:var(--muted)"></i>虛線 = 命令</span>`
+        + `<span><i style="background:var(--cmd-vivid)"></i>高度命令</span><span><i style="background:var(--act-vivid)"></i>高度</span>` }),
+    series: (colors) => ({
+      c1: SERIES_AX(colors),
+      c2: [{ key: 'hc', color: colors.cmd, width: 1.6 }, { key: 'h', color: colors.act, width: 2 }],
+    }),
+  },
+  fly: {
+    axisLabel: '模式（完全自由，從地面起飛）',
+    show: { att3Box: false, flyCard: true, btnRefly: true, loopField: false, waveField: false, ampRow: false, metricsCard: false },
+    multi: true,
+    chartText: () => ({ c1: ['三軸姿態角', '°'], c2: ['高度與水平速度', 'm、m/s'],
+      legend: LEGEND_AX() + (sim.fmode === 'acro' ? '' : `<span><i class="dash" style="border-color:var(--muted)"></i>虛線 = 命令</span>`)
+        + `<span><i style="background:var(--cmd-vivid)"></i>高度命令</span><span><i style="background:var(--act-vivid)"></i>高度</span>`
+        + `<span><i style="background:var(--warn)"></i>水平速度</span>` }),
+    series: (colors) => ({
+      c1: SERIES_AX(colors),
+      c2: [{ key: 'spd', color: colors.warn, width: 1.6 }, { key: 'hc', color: colors.cmd, width: 1.6 }, { key: 'h', color: colors.act, width: 2 }],
+    }),
+  },
+};
+const curMode = () => MODES[sim.axis];
+const curKind = () => KINDS[curMode().kind];
+const modeView = () => { const v = curMode().view; return typeof v === 'function' ? v() : v; };
+
+// ---------- [共用小工具] 只讀 sim，不碰 DOM ----------
+// 提供：chCascade、chainAxis、waveAxisName、ampDef、f1/f2/f3、n、sg、niceStep、fmtParam、MOTOR_ORDER、typingTarget
+// 某通道目前是否走串級（自由飛行時依飛行模式決定）
+function chCascade(name) {
+  if (!sim.isFly()) return sim.cascade;
+  const k = CH[name];
+  return sim.ch[k] ? sim.ch[k].cascade !== false : true;
+}
+// 方塊圖顯示的姿態鏈通道：焦點是「位置」時，姿態部分顯示 roll
+function chainAxis() { return sim.focus === 'pos' ? 'roll' : sim.focus; }
+// 振幅與週期跟著「有波形的那一軸」
+function waveAxisName() { return sim.isFly() ? 'roll' : sim.isAtt3() ? (sim.waveAxis === 'none' ? 'roll' : sim.waveAxis) : sim.axis; }
+function ampDef() {
+  const d = { ...AMP_DEFS[waveAxisName()][sim.cascade ? 'cascade' : 'inner'] };
+  if (sim.isAtt3() && sim.cascade && (waveAxisName() === 'roll' || waveAxisName() === 'pitch')) d.def = 30;
+  if (sim.isAtt3() && waveAxisName() === 'yaw' && sim.cascade) d.def = 90;
+  return d;
+}
+const f1 = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1);
+const f2 = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+const f3 = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(3);
+const n = (v, d = 3) => (Math.abs(v) < 5e-12 ? 0 : v).toFixed(d);
+const sg = (v, d = 3) => (v < 0 ? '−' : '+') + Math.abs(v).toFixed(d);
+function niceStep(range) { const raw = range / 4, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p; return (m < 1.5 ? 1 : m < 3 ? 2 : m < 7 ? 5 : 10) * p; }
+function fmtParam(v, step) { const dec = step < 0.001 ? 4 : step < 0.01 ? 3 : step < 0.1 ? 2 : 1; return v.toFixed(dec); }
+const MOTOR_ORDER = [2, 0, 1, 3]; // 馬達面板版面：左前 M3、右前 M1、左後 M2、右後 M4
+function typingTarget(e) { const t = e.target; return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
+
+// ---------- [Theme] 配色 ----------
+// 依賴：CSS 變數
+// 提供：colors（就地更新的物件，其他模組直接讀）、cssVar()
+// 發出：theme:change（colors 已更新）
+function cssVar(nm) { return getComputedStyle(document.documentElement).getPropertyValue(nm).trim(); }
+const colors = {};
+const Theme = (() => {
+  function read() {
+    Object.assign(colors, { cmd: cssVar('--cmd-vivid'), act: cssVar('--act-vivid'), cmdText: cssVar('--cmd'), actText: cssVar('--act'), ink: cssVar('--ink'), muted: cssVar('--muted'), line: cssVar('--line'), scene: cssVar('--scene'), grid: cssVar('--grid'), panel: cssVar('--panel'), warn: cssVar('--warn'), ax: [cssVar('--ax1'), cssVar('--ax2'), cssVar('--ax3')] });
+  }
+  read();
+  const changed = () => { read(); bus.emit('theme:change'); };
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', changed);
+  new MutationObserver(changed).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  return { read };
+})();
+
+// ---------- [規則] 情境決定的設定 ----------
+// 依賴：sim、app
+// 提供：applyProfileFor()
+// 依情境套用操控手感，並把參數重設為該手感的預設值：
+// 自由飛行 + 飛手視角 → 消費級（並切到 Position）；其他情況 → PX4 預設
+function lockHere() { sim.altLock = -sim.pos[2]; sim.pc.psp = [sim.pos[0], sim.pos[1]]; sim.yawSp = sim.eul[2]; }
+function applyProfileFor() {
+  const consumer = sim.isFly() && app.camMode === 'pilot';
+  sim.setProfile(consumer ? 'consumer' : 'px4');
+  if (consumer && sim.fmode !== 'pos') { sim.fmode = 'pos'; lockHere(); }
+}
+
+// ---------- [Controls] 左側設定面板：分段按鈕、滑桿、勾選框、重設 / 擾動 / 預設 ----------
+// 依賴：sim、app、applyProfileFor、ampDef、waveAxisName
+// 發出：sim:reset、mode:change、wave:change、focus:change、fmode:change、cam:change、profile:change、option:change、view:preset
+// 提供：Controls.applyAmpDefaults()、Controls.resetSim()
+// 原則：這裡只改狀態，然後發事件；面板、鏡頭、測試架怎麼更新由各自模組決定。
+const Controls = (() => {
+  // 重設模擬（不改參數），通知所有關心的模組
+  function resetSim() { sim.reset(); bus.emit('sim:reset'); }
+
+  // 分段按鈕
+  const syncers = [];
+  function syncAll() { syncers.forEach((f) => f()); }
+  function bindSeg(id, get, set) {
+    const el = $(id);
+    const sync = () => el.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === String(get()))));
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; set(b.dataset.v); syncAll(); });
+    sync(); syncers.push(sync);
+  }
+  bindSeg('segAxis', () => sim.axis, (v) => {
+    sim.axis = v;
+    if (v === 'att3') { sim.focus = 'roll'; sim.waveAxis = 'roll'; } else if (v === 'fly') sim.focus = 'roll'; else sim.focus = v;
+    applyProfileFor(); applyAmpDefaults();
+    resetSim(); bus.emit('mode:change');
+  });
+  bindSeg('segLoop', () => (sim.cascade ? 'cascade' : 'inner'), (v) => { sim.cascade = v === 'cascade'; applyAmpDefaults(); resetSim(); bus.emit('mode:change'); });
+  bindSeg('segWave', () => sim.wave, (v) => { sim.wave = v; resetSim(); bus.emit('wave:change'); });
+  bindSeg('segSpeed', () => String(app.speed), (v) => { app.speed = parseFloat(v); });
+  bindSeg('segWaveAxis', () => sim.waveAxis, (v) => {
+    sim.waveAxis = v; if (v !== 'none') sim.focus = v;
+    applyAmpDefaults(); resetSim(); bus.emit('wave:change'); bus.emit('focus:change');
+  });
+  bindSeg('segFocus', () => sim.focus, (v) => { sim.focus = v; bus.emit('focus:change'); });
+  bindSeg('segFmode', () => sim.fmode, (v) => {
+    const prev = sim.fmode; sim.fmode = v;
+    lockHere();   // 切換模式時重新鎖定目前的高度、位置與航向，避免跳動
+    if (prev !== v) sim.ch.forEach((c) => { c.integ = 0; });
+    bus.emit('fmode:change');
+  });
+  bindSeg('segCam', () => app.camMode, (v) => { app.camMode = v; applyProfileFor(); bus.emit('profile:change'); bus.emit('cam:change'); });
+  bindSeg('segProfile', () => sim.profile, (v) => { sim.setProfile(v); bus.emit('profile:change'); });
+  // 別的模組改了 sim 的設定時（例如規則切換飛行模式），讓按鈕狀態跟上
+  bus.on(CONFIG_EVENTS, syncAll);
+
+  // 振幅、週期與手動命令
+  function applyAmpDefaults() {
+    const a = ampDef(), el = $('amp');
+    el.min = a.min; el.max = a.max; el.step = a.step; el.value = a.def; sim.amp = a.def;
+    sim.period = PERIOD_DEFS[waveAxisName()] * (sim.isAtt3() && waveAxisName() === 'yaw' ? 4 / 3 : 1);
+    $('period').value = sim.period;
+    // 手動命令滑桿：角度或角速度
+    const unit = sim.cascade ? '°' : '°/s';
+    [[45, 1], [45, 1], [180, 5]].forEach(([mx, st], k) => {
+      const m = $('man' + k), lim = sim.cascade ? mx : 200;
+      m.min = -lim; m.max = lim; m.step = st; m.value = 0; sim.manual[k] = 0;
+      $('manV' + k).textContent = `0 ${unit}`;
+    });
+    $('manLabel').textContent = sim.cascade ? '手動姿態命令（像遙控器搖桿）' : '手動角速度命令（Acro）';
+  }
+  $('amp').addEventListener('input', (e) => { sim.amp = parseFloat(e.target.value); bus.emit('wave:change'); });
+  $('period').addEventListener('input', (e) => { sim.period = parseFloat(e.target.value); bus.emit('wave:change'); });
+  $('period').value = sim.period;
+  const manUnit = () => (sim.cascade ? '°' : '°/s');
+  for (let k = 0; k < 3; k++) {
+    $('man' + k).addEventListener('input', (e) => { sim.manual[k] = parseFloat(e.target.value); $('manV' + k).textContent = `${sim.manual[k]} ${manUnit()}`; });
+  }
+  $('btnManZero').addEventListener('click', () => { for (let k = 0; k < 3; k++) { sim.manual[k] = 0; $('man' + k).value = 0; $('manV' + k).textContent = `0 ${manUnit()}`; } });
+
+  // 勾選框
+  $('ff').checked = sim.ff;
+  $('ff').addEventListener('change', (e) => { sim.ff = e.target.checked; });
+  $('altHold').checked = sim.altHold;
+  $('altHold').addEventListener('change', (e) => { sim.altHold = e.target.checked; sim.ch[3].integ = 0; bus.emit('option:change'); });
+  $('tiltComp').checked = sim.tiltComp;
+  $('tiltComp').addEventListener('change', (e) => { sim.tiltComp = e.target.checked; });
+
+  // 按鈕
+  $('btnPause').addEventListener('click', () => { app.paused = !app.paused; $('btnPause').textContent = app.paused ? '繼續' : '暫停'; });
+  $('btnReset').addEventListener('click', resetSim);
+  $('btnKick').addEventListener('click', () => sim.kickNow());
+  $('btnDefaults').addEventListener('click', () => { sim.params = defaultParams(sim.profile); bus.emit('profile:change'); });
+  $('btnView').addEventListener('click', () => bus.emit('view:preset'));
+
+  return { applyAmpDefaults, resetSim, syncAll };
+})();
+
+// ---------- [ParamsPanel] 參數滑桿（顯示焦點軸） ----------
+// 依賴：sim、chCascade
+// 訂閱：mode:change、focus:change、fmode:change、profile:change、option:change、cam:change
+const ParamsPanel = (() => {
+  function build() {
+    const ax = sim.focus, box = $('params'); box.innerHTML = '';
+    const thrOff = ax === 'thr' && !sim.thrActive();
+    const posOff = ax === 'pos' && !(sim.isFly() && sim.fmode === 'pos');
+    for (const d of PARAM_DEFS[ax]) {
+      const row = document.createElement('div');
+      const dim = (d.loop === 'outer' && !chCascade(ax === 'pos' ? 'roll' : ax)) || thrOff || posOff;
+      row.className = 'slider' + (dim ? ' dim' : '');
+      const val = sim.params[ax][d.id];
+      row.innerHTML = `
+      <span class="sid"><span class="loop-tag ${d.loop}">${d.loop === 'outer' ? '外' : '內'}</span> ${d.id}</span>
+      <span class="sval"><span id="v_${d.id}">${fmtParam(val, d.step)}</span><button class="def" type="button" title="回到${PROFILES[sim.profile].name}預設 ${paramDefault(sim.profile, ax, d)}">預設</button></span>
+      <span class="sdesc">${d.desc}${posOff ? '（只在 Position 模式使用）' : thrOff ? (sim.isFly() ? '（這個飛行模式由油門直接控制推力）' : '（高度保持已關閉）') : (d.loop === 'outer' && !chCascade(ax === 'pos' ? 'roll' : ax) ? '（外迴圈已關閉）' : '')}</span>
+      <input type="range" id="p_${d.id}" min="${d.min}" max="${d.max}" step="${d.step}" value="${val}" aria-label="${d.id}">`;
+      const inp = row.querySelector('input');
+      inp.addEventListener('input', () => { sim.params[ax][d.id] = parseFloat(inp.value); $('v_' + d.id).textContent = fmtParam(parseFloat(inp.value), d.step); });
+      row.querySelector('.def').addEventListener('click', () => { const dv = paramDefault(sim.profile, ax, d); sim.params[ax][d.id] = dv; inp.value = dv; $('v_' + d.id).textContent = fmtParam(dv, d.step); });
+      box.appendChild(row);
+    }
+    $('ffRow').hidden = ax !== 'thr';
+    const multi = curKind().multi;
+    $('segFocus').hidden = !multi; $('focusNote').hidden = !multi; $('focusPosBtn').hidden = !sim.isFly();
+    $('paramAside').textContent = `${PROFILES[sim.profile].name} · ` + (ax === 'thr' ? '外 = 高度、內 = 垂直速度' : ax === 'pos' ? '外 = 位置、內 = 水平速度' : '外 = 角度、內 = 角速度');
+  }
+  bus.on(['mode:change', 'focus:change', 'fmode:change', 'profile:change', 'option:change', 'cam:change'], build);
+  return { build };
+})();
+
+// ---------- [StaticPanel] 依設定變化的文字：標籤、方塊圖、圖例、提示 ----------
+// 依賴：sim、app、curKind、AXIS_INFO、FMODE_INFO、chainAxis、chCascade、ampDef、waveAxisName
+// 訂閱：CONFIG_EVENTS
+const StaticPanel = (() => {
+  function refresh() {
+    const cf = chainAxis(), fi = AXIS_INFO[cf], mode = AXIS_INFO[sim.axis], K = curKind(), a = ampDef(), att3 = sim.isAtt3(), fly = sim.isFly();
+    const wa = waveAxisName(), wi = AXIS_INFO[wa], casc = chCascade(cf);
+    for (const [id, on] of Object.entries(K.show)) $(id).hidden = !on;
+    $('axisLabel').textContent = K.axisLabel;
+    $('ampVal').textContent = `${sim.amp} ${a.unit}`;
+    $('ampLabel').textContent = `振幅（${att3 ? CH_NAME[wa] + ' ' : ''}${sim.cascade ? wi.outer : wi.inner}命令）`;
+    $('perVal').textContent = `${+sim.period.toFixed(1)} s`;
+    $('periodRow').hidden = fly || sim.wave === 'step';
+    const waveOff = att3 && sim.waveAxis === 'none';
+    $('amp').disabled = waveOff; $('period').disabled = waveOff;
+    $('loopNote').textContent = sim.cascade
+      ? (att3 ? '三軸各自跑一組「外迴圈 P + 內迴圈 PID」，輸出一起送進 mixer。' : `外迴圈把${fi.outer}誤差換成${fi.inner}命令，內迴圈再把${fi.inner}誤差換成${cf === 'thr' ? '推力' : '力矩'}。`)
+      : `外迴圈關閉，直接命令${att3 ? '角速度' : fi.inner}。等於 PX4 的 Acro 模式，用來單獨調內迴圈。`;
+    $('rigTag').textContent = mode.rig;
+    // 圖表標題、單位、圖例（依模式類型）
+    const ct = K.chartText(fi);
+    $('c1title').textContent = ct.c1[0]; $('c1unit').textContent = ct.c1[1];
+    $('c2title').textContent = ct.c2[0]; $('c2unit').textContent = ct.c2[1];
+    $('legend').innerHTML = ct.legend;
+    // 方塊圖：自由飛行時前面多「搖桿」與「位置 / 速度」
+    ['bStick', 'aStick', 'bPos', 'aPos'].forEach((id) => { $(id).hidden = !fly; });
+    if (fly) {
+      $('bPos').classList.toggle('off', sim.fmode !== 'pos');
+      $('bPosS').textContent = sim.fmode === 'pos' ? '位置 P + 速度 PID' : '這個模式不使用';
+      $('aStick').textContent = sim.fmode === 'pos' ? '速度命令' : sim.fmode === 'acro' ? '角速度命令' : '角度命令';
+    }
+    const thrOff = cf === 'thr' && !sim.thrActive();
+    const outerOff = !casc || thrOff;
+    $('bOuter').classList.toggle('off', outerOff);
+    $('bInner').classList.toggle('off', thrOff);
+    $('bOuterS').textContent = outerOff ? '已關閉' : `${fi.outer}誤差 × P`;
+    $('bInnerS').textContent = cf === 'thr' ? '速度誤差 → 加速度' : '角速度誤差 → 力矩';
+    $('aMid').textContent = `${fi.inner}命令`;
+    $('aU').textContent = cf === 'thr' ? '總推力' : `力矩 ${fi.torque}`;
+    $('bPlantS').innerHTML = K.multi && cf !== 'thr' ? fi.plant.replace('=', '= 耦合 +') : fi.plant;
+    $('bCmdS').textContent = `${K.multi ? CH_NAME[cf] + ' ' : ''}${casc ? fi.outer : fi.inner}命令`;
+    $('feedback').innerHTML = `回授：感測器量到的 <b>${fi.inner}</b> 回到內迴圈${casc ? `，<b>${fi.outer}</b> 回到外迴圈` : ''}${fly && sim.fmode === 'pos' ? '，<b>位置與速度</b> 回到位置控制' : ''}（目前直接使用真實值）。Mixer 規則：${fi.mix}${K.multi ? '；四顆馬達同時疊加三軸力矩與總推力。' : ''}`;
+    $('tips').innerHTML = mode.tips.map((t) => `<li>${t}</li>`).join('');
+    $('waveNote').textContent = WAVE_NOTE[sim.wave];
+    $('fmodeNote').textContent = FMODE_INFO[sim.fmode].note;
+    const SC = sim.stickCfg();
+    $('profileNote').textContent = `水平最快 ${SC.velMan} m/s、爬升 ${SC.vzUp} / 下降 ${SC.vzDn} m/s、yaw ${Math.round(SC.yawRate / DEG)}°/s、傾斜上限 ${Math.round(SC.manTilt / DEG)}°、` + (Number.isFinite(SC.accHor) ? `加減速限 ${SC.accHor} m/s²、` : '加減速不限、') + `搖桿曲線 ${SC.expo}。` + (sim.profile === 'consumer' ? '數值依考照練習挑選，不是特定機型的實測值。' : '');
+    $('metricAside').textContent = (att3 ? (sim.waveAxis === 'none' ? '沒有套用波形' : CH_NAME[sim.waveAxis] + ' · ') : '') + (att3 && sim.waveAxis === 'none' ? '' : (sim.wave === 'sine' ? '最近 4 秒' : (sim.wave === 'step' ? '目前這次步階' : '最近一次完整步階')));
+  }
+  bus.on(CONFIG_EVENTS, refresh);
+  return { refresh };
+})();
+
+// ---------- [MotorsPanel] 馬達面板 ----------
+// 依賴：sim、MOTOR_ORDER
+// 訂閱：tick:ui
+const MotorsPanel = (() => {
+  const box = $('motors');
+  const hoverPwm = 1000 + 1000 * PHYS.wHover / PHYS.wMax;
+  for (const i of MOTOR_ORDER) {
+    const m = MOTORS[i];
+    const el = document.createElement('div'); el.className = 'motor';
+    el.innerHTML = `<div class="mt"><b>${m.name}</b><span>${m.pos} · ${m.s > 0 ? '逆時針' : '順時針'}</span></div>
+      <div class="bar" id="mbar${i}"><div class="fill" id="mfill${i}"></div><div class="hover" style="left:${(hoverPwm - 1000) / 10}%"></div></div>
+      <div class="mv"><span id="mpwm${i}"></span><span id="mthr${i}"></span></div>`;
+    box.appendChild(el);
+  }
+  function update() {
+    for (let i = 0; i < 4; i++) {
+      const pct = clamp((sim.pwm[i] - 1000) / 10, 0, 100);
+      $('mfill' + i).style.width = pct + '%';
+      $('mbar' + i).classList.toggle('sat', sim.sat[i]);
+      $('mpwm' + i).innerHTML = `${Math.round(sim.pwm[i])} µs${sim.sat[i] ? ' <span class="sat-tag">飽和</span>' : ''}`;
+      $('mthr' + i).textContent = `${sim.T[i].toFixed(2)} N · ${Math.round(sim.Om[i] * 60 / (2 * Math.PI))} rpm`;
+    }
+  }
+  bus.on('tick:ui', update);
+  return { update };
+})();
+
+// ---------- [LivePanel] 即時數值：HUD、方塊圖數值、響應指標 ----------
+// 依賴：sim、AXIS_INFO、chainAxis、chCascade、curKind
+// 訂閱：tick:ui
+const LivePanel = (() => {
+  function metricHTML(items) {
+    return items.map(([k, v, h, bad]) => `<div class="metric${bad ? ' bad' : ''}"><div class="mk">${k}</div><div class="mv">${v}</div><div class="mh">${h}</div></div>`).join('');
+  }
+  function update() {
+    const fx = chainAxis(), att = fx !== 'thr', info = AXIS_INFO[fx], mode = AXIS_INFO[sim.axis];
+    const k = att ? AXIS_IDX[fx] : 3, ch = sim.ch[k], conv = att ? 1 / DEG : 1, casc = chCascade(fx), fly = sim.isFly();
+    const yOuter = att ? sim.eul[k] / DEG : -sim.pos[2];
+    $('hud').innerHTML = [
+      ['模式', `<span class="on">${mode.name}</span>`],
+      ...(fly ? [['飛行', `${FMODE_INFO[sim.fmode].name} · ${sim.crashed ? '墜機' : sim.armed ? '已解鎖' : '已上鎖'}`], ['地速', `${Math.hypot(sim.vel[0], sim.vel[1]).toFixed(1)} m/s`]] : []),
+      ['Roll φ', `${f1(sim.eul[0] / DEG)}°`], ['Pitch θ', `${f1(sim.eul[1] / DEG)}°`], ['Yaw ψ', `${f1(sim.eul[2] / DEG)}°`],
+      ['高度 h', `${(-sim.pos[2]).toFixed(2)} m`], ['時間', `${sim.t.toFixed(1)} s`],
+    ].map(([a, b]) => `<span class="k">${a}</span><span>${b}</span>`).join('');
+
+    const thrOff = fx === 'thr' && !sim.thrActive();
+    $('bCmdV').innerHTML = thrOff || !Number.isFinite(casc ? ch.r : ch.inner.cmd) ? '—' : `<span class="c">${f1((casc ? ch.r : ch.inner.cmd) * conv)} ${casc ? info.ou : info.iu}</span>`;
+    $('bOuterV').innerHTML = casc && !thrOff && Number.isFinite(ch.r)
+      ? `e = ${f1(ch.eOuter * conv)} ${info.ou}<br>→ <span class="c">${f1(ch.inner.cmd * conv)} ${info.iu}</span>`
+      : '—';
+    const pid = ch.inner;
+    if (att) {
+      $('bInnerV').innerHTML = `e = ${f1(pid.e * conv)} ${info.iu}<br>P ${f3(pid.p)}<br>I ${f3(pid.i)}<br>D ${f3(pid.d)}<br>u = <span class="c">${f3(pid.u)}</span>`;
+      $('bMixV').innerHTML = `${info.torque}<sub>cmd</sub> = ${f2(sim.tauCmd[k])} N·m<br>F = ${sim.Fcmd.toFixed(1)} N`;
+      $('bPlantV').innerHTML = `${info.torque} = ${f2(sim.tauAct[k])} N·m<br>${info.inner} <span class="a">${f1(sim.w[k] / DEG)}</span><br>${info.outer} <span class="a">${f1(yOuter)}</span>`;
+    } else {
+      $('bInnerV').innerHTML = thrOff ? '—' : `e = ${f2(pid.e)} m/s<br>P ${f2(pid.p)}<br>I ${f2(pid.i)}<br>D ${f2(pid.d)}<br>a = <span class="c">${f2(pid.u)}</span> m/s²`;
+      $('bMixV').innerHTML = fly && thrOff ? `F<sub>cmd</sub> = ${sim.Fcmd.toFixed(1)} N<br>油門 ${(sim.thrFrac * 100).toFixed(0)}%` : `F<sub>cmd</sub> = ${sim.Fcmd.toFixed(1)} N<br>前饋 ${sim.ff || thrOff ? 'mg = ' + (PHYS.m * PHYS.g).toFixed(1) + ' N' : '關閉'}${sim.isAtt3() && sim.tiltComp ? '<br>÷ cos = ' + sim.tilt.toFixed(3) : ''}`;
+      $('bPlantV').innerHTML = `F = ${sim.Fact.toFixed(1)} N<br>v<sub>z</sub> <span class="a">${f2(-sim.vel[2])}</span> m/s<br>h <span class="a">${yOuter.toFixed(2)}</span> m`;
+    }
+    const sats = sim.sat.filter(Boolean).length;
+    $('bMotV').innerHTML = MOTOR_ORDER.map((i) => `${MOTORS[i].name} ${Math.round(sim.pwm[i])}`).join('<br>') + (sats ? `<br><span class="w">${sats} 顆飽和</span>` : '');
+
+    // 指標（有波形的那一軸）；只有面板顯示指標的模式類型才算
+    if (!curKind().show.metricsCard) return;
+    const ma = sim.metricAxis(), mbox = $('metrics');
+    if (!ma) { mbox.innerHTML = metricHTML([['沒有套用波形', '—', '選一軸套用波形後開始計算'], ['', '', '']]); return; }
+    const mi = AXIS_INFO[ma], unit = sim.cascade ? mi.ou : mi.iu;
+    if (sim.wave === 'sine') {
+      const m = sineMetrics(sim.log);
+      mbox.innerHTML = m ? metricHTML([
+        ['追蹤誤差 RMS', `${m.rms.toFixed(2)} ${unit}`, '越小越好'],
+        ['振幅比', `${(m.mmax / Math.max(m.cmax, 1e-9) * 100).toFixed(0)}%`, '實際 ÷ 命令；週期越短越難追'],
+      ]) : '';
+    } else {
+      const seg = sim.wave === 'step' ? sim.curSeg : (sim.segs[sim.segs.length - 1] || sim.curSeg);
+      const m = stepMetrics(seg);
+      if (!m) { mbox.innerHTML = metricHTML([['等待步階', '—', '命令變化後開始計算'], ['', '', '']]); return; }
+      const settled = m.settle !== null;
+      mbox.innerHTML = metricHTML([
+        ['上升時間 10→90%', m.rise !== null ? `${m.rise.toFixed(2)} s` : '未達 90%', 'Kp 越大越快', m.rise === null],
+        ['過衝', `${m.overshoot.toFixed(1)}%`, '增益太急或阻尼不足 → 過衝大', m.overshoot > 20],
+        ['穩定時間 ±5%', settled ? `${m.settle.toFixed(2)} s` : '尚未穩定', '振盪越少越快穩定', !settled],
+        ['穩態誤差', `${f2(m.ss)} ${unit}`, 'I 項負責消除', Math.abs(m.ss) > 0.05 * Math.abs(seg.to - seg.from)],
+      ]);
+    }
+  }
+  bus.on('tick:ui', update);
+  return { update };
+})();
+
+// ---------- [FlyPanel] 自由飛行卡片：解鎖狀態、墜機提示、重飛 ----------
+// 依賴：sim、Controls.resetSim
+// 訂閱：tick:ui
+// 發出：fly:refly（經 resetSim 也會發出 sim:reset）
+const FlyPanel = (() => {
+  function update() {
+    if (!sim.isFly()) return;
+    const st = sim.sticks, pc = sim.pc, fm = sim.fmode;
+    $('bStickV').innerHTML = `油門 ${f2(st.thr)}<br>Yaw ${f2(st.yaw)}<br>Pitch ${f2(st.pitch)}<br>Roll ${f2(st.roll)}`;
+    if (fm === 'pos') {
+      $('bPosV').innerHTML = `${pc.src === 'stick' ? '搖桿給速度' : pc.src === 'brake' ? '煞車中' : '鎖定位置'}<br>v<sub>sp</sub> N ${f1(pc.vsp[0])} E ${f1(pc.vsp[1])}<br>a N ${f1(pc.acc[0])} E ${f1(pc.acc[1])}${pc.tiltLim ? '<br><span class="w">傾斜限幅</span>' : ''}`;
+    } else $('bPosV').innerHTML = '—';
+    const pill = $('armPill');
+    const arming = !sim.armed && st.thr < -0.9 && st.yaw > 0.9, disarming = sim.armed && st.thr < -0.9 && st.yaw < -0.9;
+    pill.className = 'pill' + (sim.crashed ? ' crash' : sim.armed ? ' armed' : (arming ? ' arming' : ''));
+    pill.textContent = sim.crashed ? '墜機' : arming ? '解鎖中…' : disarming ? '上鎖中…' : sim.armed ? '已解鎖' : '已上鎖';
+    $('armProg').style.width = (arming || disarming ? clamp(sim.armTimer / FLY.armHold, 0, 1) * 100 : 0) + '%';
+    $('btnArm').textContent = sim.armed ? '上鎖' : '解鎖';
+    $('armMsg').textContent = sim.armMsg + (sim.armed && sim.landed && !sim.hasFlown ? ' · 推油門起飛' : '');
+    $('crashBanner').hidden = !sim.crashed; $('crashText').textContent = sim.crashInfo;
+  }
+  // 重飛：飛機回到 H（上鎖、油門歸零、機頭朝外），鏡頭回到起始位置，清除軌跡與懸停紀錄；PID 與手感維持目前設定
+  function refly() { Controls.resetSim(); bus.emit('fly:refly'); }
+  $('btnArm').addEventListener('click', () => { if (sim.armed) { if (sim.landed) sim.disarm('按鈕上鎖'); else sim.armMsg = '空中不能上鎖'; } else sim.tryArm(); });
+  $('btnCrashReset').addEventListener('click', Controls.resetSim);
+  $('btnRefly').addEventListener('click', refly);
+  window.addEventListener('keydown', (e) => { if (e.code === 'KeyR' && !typingTarget(e) && sim.isFly()) { e.preventDefault(); refly(); } });
+  bus.on('tick:ui', update);
+  return { refly };
+})();
+
+// ---------- [Charts] 響應曲線 ----------
+// 依賴：sim、colors、curKind
+// 訂閱：tick:draw
+const Charts = (() => {
+  // series: [{ key, color, width, dash }]，最後一條畫端點
+  function drawChart(canvas, rows, series) {
+    const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+    if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
+    const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    if (rows.length < 2) return;
+    const padL = 44, padR = 8, padT = 8, padB = 20, w = W - padL - padR, h = H - padT - padB;
+    let lo = Infinity, hi = -Infinity;
+    for (const r of rows) for (const s of series) { const v = r[s.key]; if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }
+    if (!Number.isFinite(lo)) return;
+    if (hi - lo < 1e-6) { hi += 1; lo -= 1; }
+    const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+    const t1 = rows[rows.length - 1].t, t0 = t1 - 8;
+    const X = (t) => padL + (t - t0) / 8 * w, Y = (v) => padT + (hi - v) / (hi - lo) * h;
+    g.font = '11px "IBM Plex Mono", ui-monospace, monospace'; g.lineWidth = 1; g.setLineDash([]);
+    const st = niceStep(hi - lo);
+    g.strokeStyle = colors.line; g.fillStyle = colors.muted; g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (let v = Math.ceil(lo / st) * st; v <= hi; v += st) {
+      const y = Math.round(Y(v)) + 0.5; g.beginPath(); g.moveTo(padL, y); g.lineTo(W - padR, y); g.stroke();
+      g.fillText((Math.abs(v) < 1e-9 ? 0 : +v.toFixed(3)).toString(), padL - 5, y);
+    }
+    g.textAlign = 'center'; g.textBaseline = 'top';
+    for (let s = Math.ceil(t0); s <= t1; s++) { const x = X(s); if (x < padL) continue; g.fillText(s + 's', x, H - padB + 4); }
+    for (const s of series) {
+      g.strokeStyle = s.color; g.lineWidth = s.width; g.setLineDash(s.dash ? [5, 4] : []); g.beginPath(); let started = false;
+      for (const r of rows) { if (r.t < t0 || !Number.isFinite(r[s.key])) { started = false; continue; } const x = X(r.t), y = Y(r[s.key]); if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y); }
+      g.stroke();
+    }
+    g.setLineDash([]);
+    const last = rows[rows.length - 1], s = series[series.length - 1];
+    if (Number.isFinite(last[s.key])) { g.fillStyle = s.color; g.beginPath(); g.arc(X(last.t), Y(last[s.key]), 3, 0, Math.PI * 2); g.fill(); }
+  }
+  function draw() {
+    const S = curKind().series(colors);
+    drawChart($('chart1'), sim.log, S.c1);
+    drawChart($('chart2'), sim.log, S.c2);
+  }
+  bus.on('tick:draw', draw);
+  return { draw, drawChart };
+})();
+
+// ---------- [PFD] 主飛行顯示器 ----------
+// 慣例：天空藍、地面棕、白色地平線；黃色是本機符號；洋紅是飛行指引（命令）。
+// 依賴：sim、colors、chCascade、curKind
+// 訂閱：tick:draw
+const PFD = (() => {
+  function draw() {
+    const cv = $('pfd'), dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    if (!W || !H) return;
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const [phi, th, psi] = sim.eul;
+    const tapeH = 30, cx = W / 2, cy = (H - tapeH) / 2, R = Math.min(W * 0.36, cy - 6);
+    const ppd = R / 25;  // 每度幾像素：±25° 在可視範圍內
+    g.save(); g.beginPath(); g.rect(0, 0, W, H - tapeH); g.clip();
+    g.translate(cx, cy); g.rotate(-phi); g.translate(0, th / DEG * ppd);
+    g.fillStyle = '#3f78b5'; g.fillRect(-W * 2, -H * 4, W * 4, H * 4);
+    g.fillStyle = '#7a5130'; g.fillRect(-W * 2, 0, W * 4, H * 4);
+    g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.moveTo(-W * 2, 0); g.lineTo(W * 2, 0); g.stroke();
+    // 俯仰刻度
+    g.lineWidth = 1.2; g.fillStyle = '#fff'; g.font = '11px "IBM Plex Mono", monospace'; g.textBaseline = 'middle';
+    for (let d = -60; d <= 60; d += 5) {
+      if (d === 0) continue;
+      const y = -d * ppd, half = d % 10 === 0 ? R * 0.32 : R * 0.15;
+      g.beginPath(); g.moveTo(-half, y); g.lineTo(half, y); g.stroke();
+      if (d % 10 === 0) { g.textAlign = 'right'; g.fillText(Math.abs(d), -half - 4, y); g.textAlign = 'left'; g.fillText(Math.abs(d), half + 4, y); }
+    }
+    g.restore();
+    // 滾轉刻度（固定）與天空指標（跟著 roll 轉）
+    g.save(); g.translate(cx, cy);
+    g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+    g.beginPath(); g.arc(0, 0, R, -Math.PI / 2 - 60 * DEG, -Math.PI / 2 + 60 * DEG); g.stroke();
+    for (const d of [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60]) {
+      const a = -Math.PI / 2 + d * DEG, l = d % 30 === 0 ? 11 : 6;
+      g.beginPath(); g.moveTo(Math.cos(a) * R, Math.sin(a) * R); g.lineTo(Math.cos(a) * (R + l), Math.sin(a) * (R + l)); g.stroke();
+    }
+    g.rotate(-phi); g.fillStyle = '#fff';
+    g.beginPath(); g.moveTo(0, -R + 1); g.lineTo(-6, -R + 11); g.lineTo(6, -R + 11); g.closePath(); g.fill();
+    g.restore();
+    // 飛行指引（洋紅）：命令與目前姿態的差
+    const multi = curKind().multi, live = !sim.isFly() || sim.armed;
+    const fd = (nm) => (live && chCascade(nm) && (multi || sim.axis === nm) && Number.isFinite(sim.ch[CH[nm]].r) ? sim.ch[CH[nm]].r : null);
+    const rollCmd = fd('roll'), pitchCmd = fd('pitch'), yawCmd = fd('yaw');
+    g.save(); g.translate(cx, cy); g.strokeStyle = colors.cmd; g.lineWidth = 3;
+    if (rollCmd !== null) { const dx = clamp((rollCmd - phi) / DEG * ppd * 0.8, -R * 0.8, R * 0.8); g.beginPath(); g.moveTo(dx, -R * 0.45); g.lineTo(dx, R * 0.45); g.stroke(); }
+    if (pitchCmd !== null) { const dy = clamp(-(pitchCmd - th) / DEG * ppd, -R * 0.8, R * 0.8); g.beginPath(); g.moveTo(-R * 0.45, dy); g.lineTo(R * 0.45, dy); g.stroke(); }
+    // 本機符號（黃）
+    g.strokeStyle = '#1a1a1a'; g.lineWidth = 6; g.lineCap = 'round';
+    const wing = () => { g.beginPath(); g.moveTo(-R * 0.62, 0); g.lineTo(-R * 0.22, 0); g.lineTo(-R * 0.12, 10); g.moveTo(R * 0.62, 0); g.lineTo(R * 0.22, 0); g.lineTo(R * 0.12, 10); g.stroke(); };
+    wing(); g.strokeStyle = '#f2c200'; g.lineWidth = 3.5; wing();
+    g.fillStyle = '#f2c200'; g.fillRect(-3, -3, 6, 6);
+    g.restore();
+    // 高度與垂直速度
+    g.font = '12px "IBM Plex Mono", monospace'; g.textBaseline = 'middle'; g.textAlign = 'right';
+    const box = (x, y, txt) => { const w = g.measureText(txt).width + 12; g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(x - w, y - 11, w, 22); g.fillStyle = '#fff'; g.fillText(txt, x - 6, y); };
+    box(W - 6, 16, `ALT ${(-sim.pos[2]).toFixed(2)} m`);
+    box(W - 6, 42, `VS ${f2(-sim.vel[2])} m/s`);
+    g.textAlign = 'left';
+    const boxL = (x, y, txt) => { const w = g.measureText(txt).width + 12; g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(x, y - 11, w, 22); g.fillStyle = '#fff'; g.fillText(txt, x + 6, y); };
+    boxL(6, 16, `φ ${f1(phi / DEG)}°`); boxL(6, 42, `θ ${f1(th / DEG)}°`);
+    if (sim.isFly()) { boxL(6, 68, `GS ${Math.hypot(sim.vel[0], sim.vel[1]).toFixed(1)} m/s`); g.textAlign = 'right'; box(W - 6, 68, FMODE_INFO[sim.fmode].name.toUpperCase()); }
+    // 航向帶
+    const ty = H - tapeH; g.fillStyle = '#1b2228'; g.fillRect(0, ty, W, tapeH);
+    const hdg = (psi / DEG + 360) % 360, ppdH = 3;
+    g.strokeStyle = '#cfd6db'; g.fillStyle = '#cfd6db'; g.lineWidth = 1; g.textAlign = 'center'; g.font = '11px "IBM Plex Mono", monospace';
+    for (let d = Math.floor((hdg - W / 2 / ppdH) / 5) * 5; d <= hdg + W / 2 / ppdH; d += 5) {
+      const x = cx + (d - hdg) * ppdH, dd = ((d % 360) + 360) % 360;
+      g.beginPath(); g.moveTo(x, ty); g.lineTo(x, ty + (dd % 10 === 0 ? 8 : 4)); g.stroke();
+      if (dd % 30 === 0) g.fillText({ 0: 'N', 90: 'E', 180: 'S', 270: 'W' }[dd] ?? String(dd / 10).padStart(2, '0'), x, ty + 18);
+    }
+    if (yawCmd !== null) {
+      const dh = ((yawCmd / DEG - hdg + 540) % 360) - 180, x = clamp(cx + dh * ppdH, 4, W - 4);
+      g.fillStyle = colors.cmd; g.fillRect(x - 5, ty, 10, 6);
+    }
+    g.fillStyle = '#f2c200'; g.beginPath(); g.moveTo(cx, ty + 1); g.lineTo(cx - 6, ty - 7); g.lineTo(cx + 6, ty - 7); g.closePath(); g.fill();
+    g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(cx - 24, ty - 24, 48, 18); g.fillStyle = '#fff'; g.fillText(String(Math.round(hdg) % 360).padStart(3, '0') + '°', cx, ty - 15);
+  }
+  bus.on('tick:draw', draw);
+  return { draw };
+})();
+
+// ---------- [Popover] 方塊彈出視窗：公式 + 代入目前數值 ----------
+// 依賴：sim、AXIS_INFO、FMODE_INFO、chainAxis、chCascade（只讀 sim，不改變模擬）
+// 訂閱：CONFIG_EVENTS、tick:ui（開著時重畫）
+const Popover = (() => {
+  function blockDetail(id) {
+    const fx = chainAxis(), att = fx !== 'thr', info = AXIS_INFO[fx], conv = att ? 1 / DEG : 1;
+    const k = att ? AXIS_IDX[fx] : 3, ids = PARAM_DEFS[fx].map((d) => d.id), P = sim.params[fx], ch = sim.ch[k];
+    const att3 = sim.isAtt3(), fly = sim.isFly(), thrOff = fx === 'thr' && !sim.thrActive(), casc = chCascade(fx);
+    const sec = (t, html) => `<h3>${t}</h3>${html}`;
+    const eq = (lines) => `<div class="eq">${lines.join('\n')}</div>`;
+    const io = (rows) => `<div class="io">${rows.map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join('')}</div>`;
+    const ou = info.ou, iu = info.iu;
+    if (id === 'bStick') return stickDetail(sec, eq, io);
+    if (id === 'bPos') return posDetail(sec, eq, io);
+    if (id === 'bCmd' && fly) {
+      const fm = sim.fmode, u = casc ? ou : iu;
+      if (fx === 'thr') {
+        if (thrOff) return { title: '命令（高度）', html: sec('狀態', `<p>${FMODE_INFO[fm].name} 模式沒有高度命令：油門搖桿直接決定推力比例。</p>`) + sec('目前數值', eq([`油門搖桿 ${sg(sim.sticks.thr, 2)} → 推力比例 ${(sim.thrFrac * 100).toFixed(1)}%`, `F = ${(sim.thrFrac * 100).toFixed(1)}% × ${(4 * PHYS.Tmax).toFixed(0)} N = <span class="c">${n(sim.Fcmd, 2)} N</span>`])) };
+        return { title: '命令（高度）', html: sec('來源', '<p>油門搖桿推上 / 拉下時直接給垂直速度命令；置中後先煞車，速度接近 0 時鎖定當下高度。</p>') +
+          sec('目前數值', eq([Number.isFinite(ch.r) ? `鎖定高度 = <span class="c">${n(ch.r, 2)} m</span>` : `垂直速度命令 = <span class="c">${sg(ch.inner.cmd, 2)} m/s</span>`])) };
+      }
+      const src = fm === 'acro' ? `Acro：搖桿 × ${fx === 'yaw' ? 150 : 220}°/s 直接當角速度命令`
+        : fx === 'yaw' ? 'yaw 搖桿 × 150°/s 累加成航向命令；放開就維持目前航向'
+        : fm === 'pos' ? '位置 / 速度控制算出的傾斜角' : `搖桿 × 35°（MPC_MAN_TILT_MAX）`;
+      const val = casc ? ch.r : ch.inner.cmd;
+      return { title: `命令（${CH_NAME[fx]}）`, html: sec('來源', `<p>${src}</p>`) +
+        sec('目前數值', eq([`${casc ? '角度' : '角速度'}命令 = <span class="c">${sg(val / DEG, 2)} ${u}</span>`])) +
+        sec('輸出', io([['送往', casc ? '外迴圈 P' : '內迴圈 PID（沒有外迴圈）']])) };
+    }
+    if (id === 'bCmd') {
+      const u = sim.cascade ? ou : iu, hasWave = att3 ? sim.waveAxis === fx : true;
+      const A = hasWave ? sim.amp : 0, base = fx === 'thr' ? (sim.cascade ? HOVER_ALT.thr : 0) : (att3 ? sim.manual[k] : 0);
+      if (thrOff) return { title: '命令 r（高度）', html: sec('狀態', '<p>高度保持已關閉，沒有高度命令。總推力固定為 mg。</p>') };
+      const f = { square: `r(t) = ${base} ± ${A} ${u}（每半個週期 ${sim.period / 2} s 換號）`, step: `r(t) = ${base} + ${A} ${u}（t ≥ 0.5 s）`, sine: `r(t) = ${base} + ${A}·sin(2π·(t − 0.5)/${sim.period}) ${u}` }[sim.wave];
+      return { title: '命令 r', html:
+        sec('作用', `<p>產生要飛機追的目標值。實機上來自遙控器搖桿、導引層或 AI 決策，這裡用測試波形${att3 ? '加上手動命令' : ''}代替。</p>`) +
+        (att3 && fx !== 'thr' ? sec('組成', eq([`r = 手動命令 ${sg(sim.manual[k], 0)} ${u}${hasWave ? ' + 波形' : '（這一軸沒有套用波形）'}`])) : '') +
+        sec('公式', eq([f])) +
+        sec('目前數值', eq([`t = ${n(sim.t, 2)} s`, `r = <span class="c">${sg(ch.r * conv, 2)} ${u}</span>`])) +
+        sec('輸出', io([['送往', sim.cascade ? '外迴圈 P' : '內迴圈 PID（外迴圈關閉）']])) };
+    }
+    if (id === 'bOuter') {
+      if (thrOff) return { title: '外迴圈 P（高度）', html: sec('狀態', '<p>高度保持已關閉。</p>') };
+      if (!casc || !Number.isFinite(ch.r)) return { title: '外迴圈 P', html: sec('狀態', fx === 'thr' ? '<p>目前在直接給垂直速度（油門搖桿不在中點），高度外迴圈暫停；放開搖桿後會鎖定高度並恢復。</p>' : '<p>已關閉。命令直接當作內迴圈的目標，等於 PX4 的 Acro 模式。</p>') };
+      if (att) {
+        const y = sim.eul[k], lim = RATE_MAX[k];
+        return { title: `外迴圈 P（${info.outer}）`, html:
+          sec('作用', `<p>把${info.outer}誤差換成${info.inner}命令。只用 P：誤差越大，要求轉得越快；剩下的交給內迴圈。</p>`) +
+          sec('公式', eq([`e = r − ${info.outer}`, `ω_cmd = clamp(${ids[0]} × e, ±${Math.round(lim / DEG)}°/s)`])) +
+          sec('代入目前數值', eq([
+            `e = ${sg(ch.r / DEG, 2)} − (${sg(y / DEG, 2)}) = ${sg(ch.eOuter / DEG, 2)}°`,
+            `  = ${sg(ch.eOuter, 4)} rad`,
+            `ω_cmd = ${P[ids[0]].toFixed(1)} × ${sg(ch.eOuter, 4)} = <span class="c">${sg(ch.inner.cmd, 3)} rad/s</span>`,
+            `      = ${sg(ch.inner.cmd / DEG, 1)}°/s`])) +
+          sec('輸入 / 輸出', io([['輸入', `命令 r、量測${info.outer}`], ['輸出', `${info.inner}命令 → 內迴圈`]])) };
+      }
+      const h = -sim.pos[2];
+      return { title: '外迴圈 P（高度）', html:
+        sec('作用', '<p>把高度誤差換成垂直速度命令，並限制最大爬升 3 m/s、下降 1.5 m/s。</p>') +
+        sec('公式', eq(['e = h_cmd − h', 'v_cmd = clamp(MPC_Z_P × e, −1.5, +3) m/s'])) +
+        sec('代入目前數值', eq([`e = ${n(ch.r, 2)} − ${n(h, 2)} = ${sg(ch.eOuter, 3)} m`, `v_cmd = ${P.MPC_Z_P.toFixed(2)} × ${sg(ch.eOuter, 3)} = <span class="c">${sg(ch.inner.cmd, 3)} m/s</span>`])) +
+        sec('輸入 / 輸出', io([['輸入', '高度命令、量測高度'], ['輸出', '垂直速度命令 → 內迴圈']])) };
+    }
+    if (id === 'bInner') {
+      if (thrOff) return { title: '內迴圈 PID（垂直速度）', html: sec('狀態', fly ? '<p>這個飛行模式沒有垂直速度迴路，油門搖桿直接決定推力。</p>' : '<p>高度保持已關閉，總推力固定為 mg' + (sim.tiltComp ? '，再做傾斜補償' : '') + '。</p>') };
+      const pid = ch.inner, dtc = DT * CTRL_EVERY;
+      if (att) {
+        const Kp = P[ids[1]], Ki = P[ids[2]], Kd = P[ids[3]], sum = pid.p + pid.i + pid.d;
+        return { title: `內迴圈 PID（${info.inner}）`, html:
+          sec('作用', `<p>把${info.inner}誤差換成力矩命令。這層最快、最接近馬達，負責頂住擾動，等同課程的 damper。</p>`) +
+          sec('公式', eq([
+            'e = ω_cmd − ω            <span class="m">單位 rad/s</span>',
+            `P = ${ids[1].replace('MC_', '')} × e`,
+            `I = I + ${ids[2].replace('MC_', '')} × e × Δt`,
+            `    <span class="m">Δt = ${dtc * 1000} ms（250 Hz），限幅 ±0.3</span>`,
+            `D = −${ids[3].replace('MC_', '')} × dω/dt`,
+            '    <span class="m">對量測值微分（命令跳動不會產生突波），30 Hz 低通</span>',
+            'u = clamp(P + I + D, −1, +1)',
+            '    <span class="m">正規化：u = 1 代表兩顆全速、兩顆停轉</span>',
+            `${info.torque}_cmd = u × ${TAU_SCALE[k].toFixed(2)} N·m`])) +
+          sec('代入目前數值', eq([
+            `e = ${sg(pid.cmd, 3)} − (${sg(pid.meas, 3)}) = ${sg(pid.e, 4)} rad/s  <span class="m">(${sg(pid.e / DEG, 1)}°/s)</span>`,
+            `P = ${n(Kp, 3)} × ${sg(pid.e, 4)} = ${sg(pid.p, 4)}`,
+            `I = <span class="m">累積值</span> ${sg(pid.i, 4)}${Math.abs(pid.i) >= 0.2999 ? '  <span class="w">已達限幅</span>' : ''}`,
+            `D = −${n(Kd, 4)} × ${sg(ch.dFilt, 2)} = ${sg(pid.d, 4)}  <span class="m">(dω/dt 單位 rad/s²)</span>`,
+            `u = ${sg(pid.p, 4)} ${sg(pid.i, 4)} ${sg(pid.d, 4)} = ${sg(sum, 4)}${Math.abs(sum) > 1 ? ' → <span class="w">截到 ±1</span>' : ''}`,
+            `${info.torque}_cmd = ${sg(pid.u, 4)} × ${TAU_SCALE[k].toFixed(2)} = <span class="c">${sg(sim.tauCmd[k], 3)} N·m</span>`])) +
+          sec('輸入 / 輸出', io([['輸入', `${info.inner}命令、陀螺儀量到的${info.inner}`], ['輸出', `力矩命令 ${info.torque} → Mixer`]])) };
+      }
+      return { title: '內迴圈 PID（垂直速度）', html:
+        sec('作用', '<p>把垂直速度誤差換成加速度命令，再換算成總推力。前饋項 mg 先抵消重力，PID 只負責修正。</p>') +
+        sec('公式', eq(['e = v_cmd − v_z', 'P = Z_VEL_P_ACC × e', 'I = I + Z_VEL_I_ACC × e × Δt   <span class="m">限幅 ±15</span>', 'D = −Z_VEL_D_ACC × dv_z/dt', 'a = P + I + D                  <span class="m">單位 m/s²</span>', `F = m × (${sim.ff ? 'g + ' : ''}a)`, `    <span class="m">${sim.ff ? 'g 是懸停推力前饋' : '前饋已關閉，重力只能靠 I 項抵消'}；限幅 0 ~ ${(4 * PHYS.Tmax).toFixed(0)} N</span>`])) +
+        sec('代入目前數值', eq([
+          `e = ${sg(pid.cmd, 3)} − (${sg(pid.meas, 3)}) = ${sg(pid.e, 3)} m/s`,
+          `P = ${n(P.MPC_Z_VEL_P_ACC, 2)} × ${sg(pid.e, 3)} = ${sg(pid.p, 3)}`,
+          `I = <span class="m">累積值</span> ${sg(pid.i, 3)}`,
+          `D = ${sg(pid.d, 3)}`,
+          `a = ${sg(pid.u, 3)} m/s²`,
+          `F = ${PHYS.m} × (${sim.ff ? '9.81 ' : ''}${sg(pid.u, 3)}) = ${n(sim.Fbase, 2)} N`,
+          ...((att3 && sim.tiltComp) || (fly && sim.fmode === 'alt') ? [`傾斜補償：÷ cosφ·cosθ = ÷ ${n(sim.tilt, 4)}`] : []),
+          ...(fly && sim.fmode === 'pos' ? ['Position：F = m·√(a_前² + a_右² + (g + a)²)，水平加速度一起算進推力'] : []),
+          `F_cmd = <span class="c">${n(sim.Fcmd, 2)} N</span>`])) +
+        sec('輸入 / 輸出', io([['輸入', '垂直速度命令、量測垂直速度'], ['輸出', '總推力 F → Mixer']])) };
+    }
+    if (id === 'bMix') {
+      const [L, M, N] = sim.tauCmd, F = sim.Fcmd, d = PHYS.d;
+      const lines = MOTORS.map((m, i) => {
+        const raw = F / 4 - m.y * L / (4 * d) + m.x * M / (4 * d) + m.s * N / (4 * PHYS.cQ);
+        return `${m.name}（x${m.x > 0 ? '+' : '−'} y${m.y > 0 ? '+' : '−'} ${m.s > 0 ? 'CCW' : 'CW '}）T = ${n(raw, 3)} N${sim.sat[i] ? ' → <span class="w">截到 ' + n(clamp(raw, PHYS.Tmin, PHYS.Tmax), 2) + '</span>' : ''}  Ω = ${Math.round(sim.wCmd[i])}  PWM <span class="c">${Math.round(sim.pwm[i])}</span>`;
+      });
+      return { title: 'Mixer', html:
+        sec('作用', '<p>把「總推力 + 三軸力矩」分配成四顆馬達各自的推力，再換成轉速與 PWM。這是多旋翼和固定翼最大的不同：沒有舵面，全靠四顆轉速差。</p>') +
+        sec('公式（X 型，d = 軸距/√2）', eq([
+          'Tᵢ = F/4 − yᵢ·L/(4d) + xᵢ·M/(4d) + sᵢ·N/(4·c_Q)',
+          `Ωᵢ = √(Tᵢ / k_T)    PWMᵢ = 1000 + 1000·Ωᵢ/${PHYS.wMax}`,
+          '<span class="m">xᵢ, yᵢ = ±1 為馬達位置；sᵢ = +1 逆時針、−1 順時針</span>'])) +
+        sec('代入目前數值', eq([`F = ${n(F, 2)} N   L = ${sg(L, 3)}   M = ${sg(M, 3)}   N = ${sg(N, 3)} N·m`, ...lines])) +
+        sec('輸入 / 輸出', io([['輸入', '總推力、三軸力矩命令'], ['輸出', '四顆馬達的 PWM（轉速命令）']])) };
+    }
+    if (id === 'bMot') {
+      const lines = MOTORS.map((m, i) => `${m.name}  Ω_cmd ${String(Math.round(sim.wCmd[i])).padStart(4)}  Ω ${String(Math.round(sim.Om[i])).padStart(4)} rad/s  T = ${n(PHYS.kT * 1e6, 0)}e-6 × ${Math.round(sim.Om[i])}² = <span class="a">${n(sim.T[i], 3)} N</span>`);
+      return { title: '馬達 + 螺旋槳', html:
+        sec('作用', '<p>ESC 依 PWM 驅動馬達。馬達有慣量，轉速不會瞬間到位，這段延遲是內迴圈調太急會振盪的主因。</p>') +
+        sec('公式', eq([`dΩ/dt = (Ω_cmd − Ω) / τ      τ = ${PHYS.tau * 1000} ms`, 'T = k_T · Ω²                （推力）', `Q = c_Q · T                 （反扭力，c_Q = ${PHYS.cQ} m）`])) +
+        sec('代入目前數值', eq(lines)) +
+        sec('輸入 / 輸出', io([['輸入', 'PWM（轉速命令）'], ['輸出', '四顆推力與反扭力 → 機體']])) };
+    }
+    if (id === 'bPlant') {
+      if (att) {
+        const I = [PHYS.Ix, PHYS.Iy, PHYS.Iz][k], tq = sim.tauAct[k], cp = sim.couple[k], acc = (tq + cp) / I;
+        const sumF = { 0: 'L = d · Σ(−yᵢ·Tᵢ)', 1: 'M = d · Σ(xᵢ·Tᵢ)', 2: 'N = c_Q · Σ(sᵢ·Tᵢ)' }[k];
+        const cpF = { 0: '(Iy − Iz)·q·r', 1: '(Iz − Ix)·p·r', 2: '(Ix − Iy)·p·q' }[k];
+        const w = ['p', 'q', 'r'][k], a = ['φ', 'θ', 'ψ'][k], Il = ['Ix', 'Iy', 'Iz'][k];
+        return { title: `機體動力學（${CH_NAME[fx]}）`, html:
+          sec('作用', '<p>真實的物理：力矩讓角速度改變，角速度累積成角度。這一格不是程式「算」出來的命令，而是飛機本身。</p>') +
+          sec('公式（《飛行動力學》p.7）', eq([sumF, `${Il} · d${w}/dt = ${cpF} + ${info.torque}`,
+            att3 || fly ? '    <span class="m">第一項是陀螺耦合：別的軸在轉時會帶動這一軸</span>' : '    <span class="m">測試架鎖住其他軸，耦合項為 0</span>',
+            '姿態用四元數積分，再換算成尤拉角 φ θ ψ'])) +
+          sec('代入目前數值', eq([
+            `${info.torque} = <span class="a">${sg(tq, 4)} N·m</span>${sim.kick > 0 && sim.kickCh === k ? '  <span class="w">含擾動</span>' : ''}`,
+            `耦合項 = ${sg(cp, 4)} N·m`,
+            `d${w}/dt = (${sg(cp, 4)} ${sg(tq, 4)}) / ${I} = ${sg(acc, 2)} rad/s²`,
+            `${w} = <span class="a">${sg(sim.w[k], 4)} rad/s</span>  <span class="m">(${sg(sim.w[k] / DEG, 1)}°/s)</span>`,
+            `${a} = <span class="a">${sg(sim.eul[k] / DEG, 2)}°</span>`])) +
+          sec('輸入 / 輸出', io([['輸入', '四顆推力與反扭力'], ['輸出', `${info.inner}、${info.outer} → 感測器 → 回授`]])) };
+      }
+      const F = sim.Fact, vz = -sim.vel[2], c = sim.C[2][2];
+      const aUp = F * c / PHYS.m - PHYS.g - PHYS.drag * vz;
+      return { title: '機體動力學（高度）', html:
+        sec('作用', '<p>推力沿機體 z 軸。機身傾斜時，只有 F·cosφ·cosθ 往上抵抗重力，其餘變成水平分量（水平位置目前鎖住）。</p>') +
+        sec('公式（NED，z 朝下）', eq(['向上加速度 a = F·cosφ·cosθ / m − g − c·v_z', 'dh/dt = v_z'])) +
+        sec('代入目前數值', eq([
+          `F = <span class="a">${n(F, 2)} N</span>${sim.kick > 0 && sim.kickCh === 3 ? '  <span class="w">含下沉擾動</span>' : ''}   mg = ${n(PHYS.m * PHYS.g, 2)} N`,
+          `cosφ·cosθ = ${n(c, 4)}  → 垂直分量 ${n(F * c, 2)} N`,
+          `a = ${n(F * c, 2)}/${PHYS.m} − 9.81 − ${PHYS.drag}×${sg(vz, 2)} = ${sg(aUp, 3)} m/s²`,
+          `v_z = <span class="a">${sg(vz, 3)} m/s</span>`,
+          `h = <span class="a">${n(-sim.pos[2], 3)} m</span>`])) +
+        sec('輸入 / 輸出', io([['輸入', '四顆推力'], ['輸出', '垂直速度、高度 → 感測器 → 回授']])) };
+    }
+    return { title: '', html: '' };
+  }
+  function stickDetail(sec, eq, io) {
+    const st = sim.sticks, fm = sim.fmode;
+    const SC = sim.stickCfg(), yr = Math.round(SC.yawRate / DEG), tilt = Math.round(SC.manTilt / DEG);
+    const rows = {
+      acro: ['Roll 搖桿 × 220°/s → roll 角速度命令', 'Pitch 搖桿 × −220°/s → pitch 角速度命令（推前 = 低頭）', `Yaw 搖桿 × ${yr}°/s → yaw 角速度命令`, '油門 → 推力比例（中點 = 懸停推力）'],
+      stab: [`Roll 搖桿 × ${tilt}° → roll 角度命令`, `Pitch 搖桿 × −${tilt}° → pitch 角度命令（推前 = 低頭）`, `Yaw 搖桿 × ${yr}°/s → 航向命令累加`, '油門 → 推力比例（中點 = 懸停推力）'],
+      alt: ['Roll / Pitch 同 Stabilized', 'Yaw 同 Stabilized', `油門 > 死區 → 爬升（最快 ${SC.vzUp} m/s）`, `油門 < 死區 → 下降（最快 ${SC.vzDn} m/s）；置中 = 定高`],
+      pos: [`Pitch 搖桿 × ${SC.velMan} m/s → 前進速度（機頭方向）`, `Roll 搖桿 × ${SC.velMan} m/s → 右移速度`, Number.isFinite(SC.accHor) ? `速度命令變化限 ${SC.accHor} m/s²：起步與煞停都平順` : '速度命令不限加減速', '放開 → 煞車，速度 < 0.3 m/s 後鎖定位置；油門同 Altitude'],
+    }[fm];
+    rows.push(`搖桿曲線 expo = ${SC.expo}：輸出 = ${(1 - SC.expo).toFixed(1)}·x + ${SC.expo}·x³（x 為扣除死區後的搖桿值）`);
+    return { title: '搖桿（美國手）', html:
+      sec('作用', `<p>飛手的輸入。同一支搖桿在不同飛行模式下代表不同的命令，這就是「飛行模式」的本質。目前：<b>${FMODE_INFO[fm].name}</b>，操控手感：<b>${PROFILES[sim.profile].name}</b>。</p>`) +
+      sec('對應方式', eq(rows)) +
+      sec('目前數值（−1 ~ +1，死區 ±0.08）', eq([`左：油門 ${sg(st.thr, 2)}  Yaw ${sg(st.yaw, 2)}`, `右：Pitch ${sg(st.pitch, 2)}  Roll ${sg(st.roll, 2)}`])) +
+      sec('遙控解鎖', eq(['解鎖：油門 < −0.6 且 Yaw > +0.6（右下角區域），維持 1 s，只能在地面', '上鎖：油門 < −0.6 且 Yaw < −0.6（左下角區域），維持 1 s，只能在地面', `計時 ${sim.armTimer.toFixed(2)} s`])) };
+  }
+  function posDetail(sec, eq, io) {
+    if (sim.fmode !== 'pos') return { title: '位置 / 速度控制', html: sec('狀態', `<p>${FMODE_INFO[sim.fmode].name} 模式不使用位置控制，搖桿直接給${sim.fmode === 'acro' ? '角速度' : '角度'}。切到 Position 才會啟用。</p>`) };
+    const pc = sim.pc, P = sim.params.pos, psi = sim.eul[2];
+    const up = PHYS.g + (Number.isFinite(sim.aUp) ? sim.aUp : 0), aFR = pc.aFR || [0, 0];
+    const srcLine = pc.src === 'stick' ? '搖桿推動中：直接給速度命令（位置外迴圈暫停）' : pc.src === 'brake' ? '剛放開搖桿：速度命令 = 0，等速度 < 0.3 m/s 再鎖定位置' : `鎖定位置 N ${n(pc.psp[0], 2)}  E ${n(pc.psp[1], 2)} m`;
+    return { title: '位置 / 速度控制', html:
+      sec('作用', '<p>PX4 的位置控制器：位置誤差 → 速度命令 → 速度 PID → 水平加速度 → 換成傾斜角交給姿態控制。多旋翼要往前加速，只能讓機身前傾、借推力的水平分量。</p>') +
+      sec('公式（N、E 兩軸各一組）', eq([
+        `v_sp = MPC_XY_P × (p_sp − p)              <span class="m">限 ${sim.stickCfg().velMan} m/s${Number.isFinite(sim.stickCfg().accHor) ? '，變化率限 ' + sim.stickCfg().accHor + ' m/s²' : ''}</span>`,
+        'e = v_sp − v',
+        'a = XY_VEL_P × e + I + D                  <span class="m">I 限 ±5 m/s²</span>',
+        'a_前 = a_N·cosψ + a_E·sinψ   a_右 = −a_N·sinψ + a_E·cosψ',
+        'pitch_sp = −atan(a_前 / (g + a_z))   roll_sp ≈ atan(a_右 / (g + a_z))',
+        '<span class="m">傾斜上限 45°（MPC_TILTMAX_AIR）</span>'])) +
+      sec('代入目前數值', eq([
+        srcLine,
+        ...(pc.src === 'hold' ? [`誤差 N ${sg(pc.ep[0], 3)}  E ${sg(pc.ep[1], 3)} m  × ${n(P.MPC_XY_P, 2)}`] : []),
+        `v_sp N ${sg(pc.vsp[0], 2)}  E ${sg(pc.vsp[1], 2)} m/s   v N ${sg(sim.vel[0], 2)}  E ${sg(sim.vel[1], 2)}`,
+        `P N ${sg(pc.p[0], 2)}  E ${sg(pc.p[1], 2)}   I N ${sg(pc.integ[0], 2)}  E ${sg(pc.integ[1], 2)}   D N ${sg(pc.d[0], 2)}  E ${sg(pc.d[1], 2)}`,
+        `a N ${sg(pc.acc[0], 2)}  E ${sg(pc.acc[1], 2)} m/s²   ψ = ${n(psi / DEG, 1)}°`,
+        `a_前 ${sg(aFR[0], 2)}  a_右 ${sg(aFR[1], 2)}   g + a_z = ${n(up, 2)}${pc.tiltLim ? '  <span class="w">傾斜限幅</span>' : ''}`,
+        `→ roll_sp <span class="c">${sg(sim.ch[0].r / DEG, 1)}°</span>   pitch_sp <span class="c">${sg(sim.ch[1].r / DEG, 1)}°</span>`])) +
+      sec('輸入 / 輸出', io([['輸入', '搖桿速度命令或鎖定位置、GPS 位置與速度（目前用真實值）'], ['輸出', 'roll / pitch 角度命令 → 姿態外迴圈；水平加速度也算進總推力']])) };
+  }
+  let popId = null;
+  const pop = $('pop');
+  function render() { if (!popId) return; const d = blockDetail(popId); $('popTitle').textContent = d.title; $('popBody').innerHTML = d.html; }
+  function place(anchor) {
+    const r = anchor.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+    const left = clamp(r.left, 16, vw - pw - 16); let top = r.bottom + 8;
+    if (top + ph > vh - 16) top = Math.max(16, r.top - ph - 8);
+    pop.style.left = left + 'px'; pop.style.top = top + 'px';
+  }
+  function open(el) {
+    document.querySelectorAll('.blk.active').forEach((b) => b.classList.remove('active'));
+    popId = el.id; el.classList.add('active'); pop.hidden = false; render(); place(el);
+  }
+  function close() { popId = null; pop.hidden = true; document.querySelectorAll('.blk.active').forEach((b) => b.classList.remove('active')); }
+  document.querySelectorAll('.blk').forEach((el) => {
+    el.addEventListener('click', () => (popId === el.id ? close() : open(el)));
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); popId === el.id ? close() : open(el); } });
+  });
+  $('popClose').addEventListener('click', close);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  document.addEventListener('pointerdown', (e) => { if (popId && !pop.contains(e.target) && !e.target.closest('.blk')) close(); });
+  window.addEventListener('scroll', () => { if (popId) place($(popId)); }, { passive: true });
+  window.addEventListener('resize', () => { if (popId) place($(popId)); });
+  bus.on([...CONFIG_EVENTS, 'tick:ui'], render);
+  return { render, blockDetail };
+})();
+
+// ---------- [Input] 鍵盤 / Xbox 手把 / 畫面虛擬搖桿（美國手） ----------
+// 油門不會自動回中（和真的遙控器一樣），其他三軸放開回中。手把的左搖桿本身會回中，接上手把時由手把決定油門。
+// 依賴：sim、colors
+// 訂閱：sim:reset（油門歸零）、tick:input（讀輸入寫進 sim.sticks）、tick:ui（輸入狀態文字）、tick:draw（畫虛擬搖桿）
+// 提供：Input.state（除錯用）
+const Input = (() => {
+  const input = {
+    thr: -1, keys: new Set(),
+    vL: null, vR: null,                 // 虛擬搖桿拖曳中的值 [x, y]
+    gp: { state: 'none', id: '' },      // none | connected | blocked
+    kbSpring: false,
+  };
+  const KEY_CODES = ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+  window.addEventListener('keydown', (e) => {
+    if (!sim.isFly() || !KEY_CODES.includes(e.code) || (typingTarget(e) && e.target.type !== 'checkbox')) return;
+    if (e.target.type === 'range') return;
+    e.preventDefault(); input.keys.add(e.code);
+  });
+  window.addEventListener('keyup', (e) => { input.keys.delete(e.code); });
+  window.addEventListener('blur', () => input.keys.clear());
+
+  function readGamepad() {
+    let pads = [];
+    try { pads = navigator.getGamepads ? navigator.getGamepads() : []; }
+    catch (err) { input.gp.state = 'blocked'; return null; }
+    const pad = Array.from(pads || []).find((p) => p && p.connected);
+    if (!pad) { if (input.gp.state !== 'blocked') input.gp.state = 'none'; return null; }
+    input.gp.state = 'connected'; input.gp.id = pad.id;
+    const ax = pad.axes;
+    // 標準對應：0 左X、1 左Y（上 = −1）、2 右X、3 右Y
+    return { yaw: ax[0] || 0, thr: -(ax[1] || 0), roll: ax[2] || 0, pitch: -(ax[3] || 0) };
+  }
+  function statusText() {
+    const gp = input.gp.state === 'connected' ? '手把已連線' : input.gp.state === 'blocked' ? '瀏覽器封鎖手把（請下載 HTML 在本機開啟）' : '未偵測到手把（按任一鍵喚醒）';
+    return `${gp} · 鍵盤可用`;
+  }
+  function read(dt) {
+    if (!sim.isFly()) return;
+    const k = input.keys, key = (a, b) => (k.has(a) ? 1 : 0) - (k.has(b) ? 1 : 0);
+    // 鍵盤油門：Acro / Stabilized 會停在原位（推力比例）；Altitude / Position 放開回中（= 定高），按住 W / S 爬升或下降
+    if (sim.fmode === 'alt' || sim.fmode === 'pos') {
+      if (k.has('KeyW') || k.has('KeyS') || input.kbSpring) { input.thr = key('KeyW', 'KeyS'); input.kbSpring = k.has('KeyW') || k.has('KeyS'); }
+    } else {
+      if (k.has('KeyW')) input.thr = Math.min(1, input.thr + dt * 0.8);
+      if (k.has('KeyS')) input.thr = Math.max(-1, input.thr - dt * 0.8);
+    }
+    const gp = readGamepad();
+    if (input.vL) input.thr = input.vL[1];
+    if (gp && !k.has('KeyW') && !k.has('KeyS') && !input.vL) input.thr = gp.thr;   // 正在用鍵盤或虛擬搖桿時，手把不覆蓋油門
+    const sum = (...v) => clamp(v.reduce((a, b) => a + b, 0), -1, 1);
+    sim.sticks.thr = input.thr;
+    sim.sticks.yaw = sum(key('KeyD', 'KeyA'), input.vL ? input.vL[0] : 0, gp ? gp.yaw : 0);
+    sim.sticks.roll = sum(key('ArrowRight', 'ArrowLeft'), input.vR ? input.vR[0] : 0, gp ? gp.roll : 0);
+    sim.sticks.pitch = sum(key('ArrowUp', 'ArrowDown'), input.vR ? input.vR[1] : 0, gp ? gp.pitch : 0);
+  }
+
+  // 畫面虛擬搖桿
+  function bindStick(id, side) {
+    const cv = $(id);
+    const set = (e) => {
+      const r = cv.getBoundingClientRect();
+      const x = clamp(((e.clientX - r.left) / r.width) * 2 - 1, -1, 1), y = clamp(1 - ((e.clientY - r.top) / r.height) * 2, -1, 1);
+      input[side] = [x, y];
+    };
+    cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); set(e); });
+    cv.addEventListener('pointermove', (e) => { if (input[side]) set(e); });
+    const up = () => { input[side] = null; };   // 放開：左搖桿只回中 yaw，油門留在原位
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  }
+  bindStick('stickL', 'vL'); bindStick('stickR', 'vR');
+  function drawStick(id, x, y, lx, ly) {
+    const cv = $(id), dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    if (!W) return;
+    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const pad = 12, cx = W / 2, cy = H / 2, R = W / 2 - pad;
+    g.strokeStyle = colors.line; g.lineWidth = 1;
+    g.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
+    g.beginPath(); g.moveTo(cx, pad); g.lineTo(cx, H - pad); g.moveTo(pad, cy); g.lineTo(W - pad, cy); g.stroke();
+    // 死區
+    g.strokeStyle = colors.muted; g.setLineDash([3, 3]); g.strokeRect(cx - R * FLY.dz, cy - R * FLY.dz, 2 * R * FLY.dz, 2 * R * FLY.dz); g.setLineDash([]);
+    g.fillStyle = colors.muted; g.font = '10px "IBM Plex Mono", monospace'; g.textAlign = 'center'; g.textBaseline = 'top';
+    g.fillText(ly, cx, 1); g.textBaseline = 'middle'; g.textAlign = 'right'; g.fillText(lx, W - 1, cy - 8);
+    const px = cx + x * R, py = cy - y * R;
+    g.strokeStyle = colors.cmd; g.lineWidth = 1.5; g.beginPath(); g.moveTo(cx, cy); g.lineTo(px, py); g.stroke();
+    g.fillStyle = colors.cmd; g.beginPath(); g.arc(px, py, 7, 0, Math.PI * 2); g.fill();
+  }
+  function drawSticks() {
+    if (!sim.isFly()) return;
+    const st = sim.sticks;
+    drawStick('stickL', st.yaw, st.thr, 'Yaw', '油門');
+    drawStick('stickR', st.roll, st.pitch, 'Roll', 'Pitch');
+  }
+
+  bus.on('sim:reset', () => { input.thr = -1; });
+  bus.on('tick:input', read);
+  bus.on('tick:ui', () => { if (sim.isFly()) $('inputStatus').textContent = statusText(); });
+  bus.on('tick:draw', drawSticks);
+  DEBUG.input = input;
+  return { state: input, statusText };
+})();
+
+// ================= 3D 場景 =================
+// 座標對應：NED（北、東、下）→ three.js（x = 東、y = 上、z = 南）。機體 FRD 用同一個對應。
+
+// ---------- [Scene] renderer、場景、相機物件、地面與格線 ----------
+// 依賴：colors
+// 訂閱：theme:change（背景與格線）、view:resize、tick:render（畫一幀）
+// 提供：view、scene、camera、textSprite()、flatText()
+const view = $('viewport');
+const Scene = (() => {
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  view.prepend(renderer.domElement);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 500);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.9));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.7); sun.position.set(3, 8, 4); scene.add(sun);
+
+  let grid = null;
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: 0x888888, transparent: true, opacity: 0.35 }));
+  ground.rotation.x = -Math.PI / 2; scene.add(ground);
+  function applyColors() {
+    scene.background = new THREE.Color(colors.scene);
+    if (grid) scene.remove(grid);
+    grid = new THREE.GridHelper(200, 200, new THREE.Color(colors.grid), new THREE.Color(colors.grid));
+    grid.position.y = 0.002; scene.add(grid);
+    ground.material.color = new THREE.Color(colors.scene).offsetHSL(0, 0, -0.04);
+  }
+  applyColors();
+  function resize() {
+    const w = view.clientWidth, h = view.clientHeight;
+    renderer.setSize(w, h, false); camera.aspect = w / Math.max(h, 1); camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(view);
+  bus.on('theme:change', applyColors);
+  bus.on('view:resize', resize);
+  bus.on('tick:render', () => renderer.render(scene, camera));
+  return { scene, camera, resize };
+})();
+const { scene, camera } = Scene;
+
+// 文字貼圖（面向鏡頭）與平放在地面的文字
+function textSprite(text, color) {
+  const c = document.createElement('canvas'); c.width = 160; c.height = 64;
+  const g = c.getContext('2d');
+  g.font = '600 34px "Barlow Condensed", "Noto Sans TC", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,0.55)'; g.strokeText(text, 80, 32);
+  g.fillStyle = '#' + color.toString(16).padStart(6, '0'); g.fillText(text, 80, 32);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
+  sp.renderOrder = 10; return sp;
+}
+function flatText(text, w, h, fg, bg) {
+  const c = document.createElement('canvas'); c.width = 256; c.height = Math.round(256 * h / w);
+  const g = c.getContext('2d');
+  if (bg) { g.fillStyle = bg; g.fillRect(0, 0, c.width, c.height); }
+  g.fillStyle = fg; g.font = `700 ${Math.round(c.height * 0.62)}px "Noto Sans TC", sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(text, c.width / 2, c.height / 2 + 2);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: !bg }));
+  m.rotation.x = -Math.PI / 2; return m;
+}
+
+// ---------- [DroneModel] 無人機模型、座標軸 ----------
+// 模型座標：前 = −z、右 = +x、上 = +y
+// 依賴：scene、sim、app（暫停 / 速度）、colors
+// 訂閱：theme:change（螺旋槳顏色）、tick:frame（同步姿態、位置與螺旋槳）
+const DroneModel = (() => {
+  const drone = new THREE.Group(); scene.add(drone);
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x2b3a44, roughness: 0.6 });
+  const frontMat = new THREE.MeshStandardMaterial({ color: 0xd04090, roughness: 0.5 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.045, 0.16), frameMat); drone.add(body);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.06, 12), frontMat); nose.rotation.x = -Math.PI / 2; nose.position.set(0, 0, -0.11); drone.add(nose);
+  const motorObjs = [];
+  MOTORS.forEach((m) => {
+    const px = m.y * PHYS.d, pz = -m.x * PHYS.d;
+    const len = Math.hypot(px, pz);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.012, len), m.x > 0 ? frontMat : frameMat);
+    arm.position.set(px / 2, 0, pz / 2); arm.rotation.y = Math.atan2(px, pz); drone.add(arm);
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.03, 16), frameMat); can.position.set(px, 0.012, pz); drone.add(can);
+    const discMat = new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.32, side: THREE.DoubleSide, depthWrite: false });
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(0.11, 32), discMat); disc.rotation.x = -Math.PI / 2; disc.position.set(px, 0.03, pz); drone.add(disc);
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.004, 0.018), new THREE.MeshStandardMaterial({ color: 0x1b252c })); blade.position.set(px, 0.032, pz); drone.add(blade);
+    const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(px, 0.04, pz), 0.2, 0x22aaaa, 0.04, 0.03); drone.add(arrow);
+    motorObjs.push({ disc, discMat, blade, arrow, angle: 0 });
+  });
+  let propBase = new THREE.Color(0x888888), propHot = new THREE.Color(0x22aaaa);
+  function applyColors() { propBase = new THREE.Color(colors.muted); propHot = new THREE.Color(colors.act); }
+  applyColors();
+
+  // 座標軸：世界 NED（固定在原點）與機體 FRD（跟著飛機轉）。紅 = 第 1 軸、綠 = 第 2 軸、藍 = 第 3 軸。
+  const AXIS_COLORS = [0xe5484d, 0x30a46c, 0x3e63dd];
+  function makeAxes(dirs, labels, len, labelScale) {
+    const grp = new THREE.Group();
+    dirs.forEach((d, i) => {
+      const v = new THREE.Vector3(...d);
+      const ar = new THREE.ArrowHelper(v, new THREE.Vector3(0, 0, 0), len, AXIS_COLORS[i], len * 0.14, len * 0.07);
+      ar.line.material.depthTest = false; ar.cone.material.depthTest = false; ar.renderOrder = 9;
+      grp.add(ar);
+      const sp = textSprite(labels[i], AXIS_COLORS[i]); sp.scale.set(labelScale * 2.5, labelScale, 1);
+      sp.position.copy(v.clone().multiplyScalar(len + labelScale * 0.8)); grp.add(sp);
+    });
+    return grp;
+  }
+  // three 方向：N = −z、E = +x、D = −y；機體 前 = −z、右 = +x、下 = −y（模型座標）
+  const axesWorld = makeAxes([[0, 0, -1], [1, 0, 0], [0, -1, 0]], ['N 北', 'E 東', 'D 下'], 1.0, 0.16);
+  scene.add(axesWorld);
+  const axesBody = makeAxes([[0, 0, -1], [1, 0, 0], [0, -1, 0]], ['x 前', 'y 右', 'z 下'], 0.36, 0.08);
+  drone.add(axesBody);
+  $('chkAxes').addEventListener('change', (e) => { axesWorld.visible = axesBody.visible = e.target.checked; });
+
+  // 姿態：three 旋轉矩陣 = P · Cbn · Pᵀ，P 把 (N, E, D) 映到 (x, y, z) = (E, −D, −N)
+  const _m4 = new THREE.Matrix4();
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function sync(frameDt) {
+    const C = cbn(sim.eul[0], sim.eul[1], sim.eul[2]);
+    const P = [[0, 1, 0], [0, 0, -1], [-1, 0, 0]];
+    const R = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) { let s = 0; for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) s += P[i][a] * C[a][b] * P[j][b]; R[i][j] = s; }
+    _m4.set(R[0][0], R[0][1], R[0][2], 0, R[1][0], R[1][1], R[1][2], 0, R[2][0], R[2][1], R[2][2], 0, 0, 0, 0, 1);
+    drone.quaternion.setFromRotationMatrix(_m4);
+    drone.position.set(sim.pos[1], -sim.pos[2], -sim.pos[0]);
+    MOTORS.forEach((m, i) => {
+      const o = motorObjs[i], frac = sim.Om[i] / PHYS.wMax;
+      if (!reduceMotion) o.angle += m.s * frac * 22 * frameDt * (app.paused ? 0 : app.speed);
+      o.blade.rotation.y = o.angle;
+      o.discMat.color.copy(propBase).lerp(propHot, clamp((frac - 0.4) / 0.6, 0, 1));
+      o.discMat.opacity = 0.18 + 0.3 * frac;
+      o.arrow.setLength(0.05 + 0.35 * sim.T[i] / PHYS.Tmax, 0.04, 0.03);
+      o.arrow.setColor(sim.sat[i] ? new THREE.Color(cssVar('--warn')) : propHot);
+    });
+  }
+  bus.on('theme:change', applyColors);
+  bus.on('tick:frame', sync);
+  return { drone };
+})();
+
+// ---------- [Rig] 測試架 ----------
+// 依賴：scene、sim、MODES（rig 欄位）、colors
+// 訂閱：mode:change、theme:change
+const Rig = (() => {
+  const rig = new THREE.Group(); scene.add(rig);
+  // 每種測試架樣式一個建構函式；新增樣式時在這裡加一筆，再到 MODES 引用
+  const RIG_BUILDERS = {
+    bar(cfg, rod, h) {        // 水平橫桿 + 兩根支柱（roll / pitch）
+      const bar = rod(1.0, cfg.axis); bar.position.y = h; rig.add(bar);
+      for (const s of [-1, 1]) { const post = rod(h, 'y'); post.position.set(cfg.axis === 'x' ? s * 0.5 : 0, h / 2, cfg.axis === 'z' ? s * 0.5 : 0); rig.add(post); }
+    },
+    post(cfg, rod, h) {       // 中央立柱（yaw）
+      const post = rod(h - 0.03, 'y'); post.position.y = (h - 0.03) / 2; rig.add(post);
+    },
+    rails(cfg, rod) {         // 兩根垂直滑軌（高度、三軸）
+      for (const s of [-1, 1]) { const rail = rod(6, 'y'); rail.position.set(s * cfg.off, 3, 0); rig.add(rail); }
+    },
+    none() {},                // 自由飛行：沒有測試架
+  };
+  function rebuild() {
+    while (rig.children.length) rig.remove(rig.children[0]);
+    const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(colors.muted), roughness: 0.8 });
+    const rod = (len, axis) => { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, len, 10), mat); if (axis === 'x') c.rotation.z = Math.PI / 2; if (axis === 'z') c.rotation.x = Math.PI / 2; return c; };
+    const cfg = curMode().rig;
+    RIG_BUILDERS[cfg.type](cfg, rod, HOVER_ALT.att);
+  }
+  bus.on(['mode:change', 'theme:change'], rebuild);
+  return { rebuild };
+})();
+
+// ---------- [Exam] 起降點、考照場地與考照輔助 ----------
+// 依賴：scene、sim、EXAM、textSprite、flatText
+// 訂閱：sim:reset、trail:cleared（重設懸停紀錄）、tick:frame（懸停計時與 HUD）
+// 提供：Exam.state（除錯用）
+const Exam = (() => {
+  // 非考照時顯示的簡易起降點
+  const padRing = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 40), new THREE.MeshBasicMaterial({ color: 0xf2c200, side: THREE.DoubleSide }));
+  padRing.rotation.x = -Math.PI / 2; padRing.position.y = 0.006; scene.add(padRing);
+  const padH = textSprite('H', 0xf2c200); padH.scale.set(0.5, 0.2, 1); padH.position.set(0, 0.05, 0); scene.add(padH);
+
+  const examField = new THREE.Group(); scene.add(examField);
+  (function buildExamField() {
+    const P = (x, y, z = 0.01) => new THREE.Vector3(x, z, -y);
+    const lineMat = (color) => new THREE.LineBasicMaterial({ color });
+    const rect = ([x0, x1, y0, y1], color, z) => {
+      const g = new THREE.BufferGeometry().setFromPoints([P(x0, y0, z), P(x1, y0, z), P(x1, y1, z), P(x0, y1, z), P(x0, y0, z)]);
+      examField.add(new THREE.Line(g, lineMat(color)));
+    };
+    const seg = (a, b, color, z) => examField.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([P(...a, z), P(...b, z)]), lineMat(color)));
+    // 地面（水泥色）
+    const [fx0, fx1, fy0, fy1] = EXAM.field;
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(fx1 - fx0, fy1 - fy0), new THREE.MeshLambertMaterial({ color: 0xc9cdd0 }));
+    ground.rotation.x = -Math.PI / 2; ground.position.set((fx0 + fx1) / 2, 0.004, -(fy0 + fy1) / 2); examField.add(ground);
+    rect(EXAM.field, 0xffffff, 0.012);
+    seg([0, fy0], [0, fy1], 0xffffff, 0.012); seg([fx0, 0], [fx1, 0], 0xffffff, 0.012);   // 中線
+    rect(EXAM.bandOuter, 0xe0b81c, 0.016); rect(EXAM.bandInner, 0xe0b81c, 0.016);      // 容許帶
+    // H 起降圈
+    const hd = new THREE.Mesh(new THREE.CircleGeometry(EXAM.H.r, 48), new THREE.MeshLambertMaterial({ color: 0x80868b }));
+    hd.rotation.x = -Math.PI / 2; hd.position.y = 0.014; examField.add(hd);
+    const hText = flatText('H', 1.0, 1.0, '#ffffff'); hText.position.y = 0.02; examField.add(hText);
+    // P 點：角錐 + 黃點 + 懸停圈 + 標籤
+    for (const p of EXAM.points) {
+      const dot = new THREE.Mesh(new THREE.CircleGeometry(0.12, 20), new THREE.MeshBasicMaterial({ color: 0xf2c200 }));
+      dot.rotation.x = -Math.PI / 2; dot.position.copy(P(p.x, p.y, 0.02)); examField.add(dot);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(EXAM.hoverR - 0.03, EXAM.hoverR, 48), new THREE.MeshBasicMaterial({ color: 0xf2c200, transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
+      ring.rotation.x = -Math.PI / 2; ring.position.copy(P(p.x, p.y, 0.018)); examField.add(ring);
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.45, 20), new THREE.MeshLambertMaterial({ color: 0xf07a1a }));
+      cone.position.copy(P(p.x + (p.x < 0 ? -0.35 : 0.35), p.y, 0.225)); examField.add(cone);
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.105, 0.09, 20), new THREE.MeshLambertMaterial({ color: 0xffffff }));
+      band.position.copy(P(p.x + (p.x < 0 ? -0.35 : 0.35), p.y, 0.26)); examField.add(band);
+      const lab = textSprite(p.n, 0xd0302a); lab.scale.set(0.9, 0.36, 1); lab.position.copy(P(p.x + (p.x < 0 ? -0.6 : 0.6), p.y, 0.75)); examField.add(lab);
+    }
+    // 飛手站位 P、h、監評人員
+    const box = (x, y, w, d, label) => {
+      const t = flatText(label, w, d, '#1d2328', '#ffffff'); t.position.copy(P(x, y, 0.015)); examField.add(t);
+    };
+    box(0, -2.55, 1, 0.6, 'P'); box(0, -3.15, 1, 0.6, 'h'); box(0, -3.75, 4, 0.6, '監評人員');
+  })();
+
+  // 考照輔助：懸停計時、容許帶、高度提示
+  const exam = { on: true, target: null, hold: 0, done: {}, lastT: 0 };
+  function update() {
+    const box = $('examHud');
+    const show = sim.isFly() && exam.on;
+    box.hidden = !show;
+    examField.visible = show; padRing.visible = padH.visible = !show;
+    if (!show) return;
+    const x = sim.pos[1], y = sim.pos[0], h = -sim.pos[2], v = Math.hypot(sim.vel[0], sim.vel[1]);
+    const dt = Math.max(0, sim.t - exam.lastT); exam.lastT = sim.t;
+    const cands = [{ n: 'H', x: 0, y: 0 }, ...EXAM.points];
+    const near = cands.find((p) => Math.hypot(x - p.x, y - p.y) <= EXAM.hoverR);
+    const airborne = !sim.landed && sim.armed;
+    if (near && airborne && v < EXAM.hoverV) {
+      if (exam.target !== near.n) { exam.target = near.n; exam.hold = 0; }
+      exam.hold += dt;
+      if (exam.hold >= EXAM.hoverNeed) exam.done[near.n] = true;
+    } else { exam.target = near && airborne ? near.n : null; exam.hold = 0; }
+    const [ox0, ox1, oy0, oy1] = EXAM.bandOuter, [ix0, ix1, iy0, iy1] = EXAM.bandInner;
+    const inOuter = x >= ox0 && x <= ox1 && y >= oy0 && y <= oy1, inInner = x > ix0 && x < ix1 && y > iy0 && y < iy1;
+    const inBand = inOuter && !inInner;
+    const hOk = h >= EXAM.hMin && h <= EXAM.hMax;
+    const prog = clamp(exam.hold / EXAM.hoverNeed, 0, 1);
+    const tgtTxt = exam.target
+      ? `${exam.target} 懸停 <b>${Math.min(exam.hold, 99).toFixed(1)}</b> / 5 s${exam.hold >= EXAM.hoverNeed ? ' <span class="ok">完成</span>' : (v >= EXAM.hoverV ? ' <span class="w">速度太快</span>' : '')}`
+      : '飛到 H 或 P 點圈內開始計時';
+    box.innerHTML = `<div>${tgtTxt}</div><div class="exam-bar"><i style="width:${prog * 100}%"></i></div>
+    <div class="exam-row"><span class="${!airborne ? '' : inBand ? 'ok' : 'w'}">${!airborne ? '容許帶 —' : inBand ? '在容許帶內' : '超出容許帶'}</span>
+    <span class="${!airborne ? '' : hOk ? 'ok' : 'w'}">高度 ${h.toFixed(2)} m${airborne && !hOk ? '（應 1~2 m）' : ''}</span></div>
+    <div class="exam-row">${['H', 'P1', 'P2', 'P3', 'P4'].map((nm) => `<span class="${exam.done[nm] ? 'ok' : 'muted'}">${exam.done[nm] ? '✓' : '○'} ${nm}</span>`).join('')}</div>`;
+  }
+  function reset() { exam.target = null; exam.hold = 0; exam.done = {}; exam.lastT = sim.t; }
+  $('chkExam').addEventListener('change', (e) => { exam.on = e.target.checked; reset(); });
+  bus.on(['sim:reset', 'trail:cleared'], reset);
+  bus.on('tick:frame', update);
+  DEBUG.exam = exam;
+  return { state: exam, reset };
+})();
+
+// ---------- [Trail] 飛行軌跡 ----------
+// 飛手視角下 3 秒後淡出（顏色漸漸混進地面色）；其他鏡頭保留完整軌跡
+// 依賴：scene、sim、app（鏡頭模式）、colors
+// 訂閱：sim:reset（清除）、tick:frame（加點與淡出）
+// 發出：trail:cleared（按「清除軌跡」時）
+// 提供：Trail.count()、Trail.line（除錯用）
+const Trail = (() => {
+  const TRAIL_N = 3000, TRAIL_FADE = 3;
+  const trailPos = new Float32Array(TRAIL_N * 3), trailCol = new Float32Array(TRAIL_N * 3), trailTime = new Float32Array(TRAIL_N);
+  const trailGeo = new THREE.BufferGeometry();
+  trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+  trailGeo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
+  trailGeo.setDrawRange(0, 0);
+  const line = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ vertexColors: true })); line.frustumCulled = false; scene.add(line);
+  let trailCount = 0, trailT = -1, trailOn = true;
+  const _tc = new THREE.Color(), _bg = new THREE.Color(0xc9cdd0), _c = new THREE.Color();
+  function clear() { trailCount = 0; trailT = -1; trailGeo.setDrawRange(0, 0); }
+  function update() {
+    line.visible = trailOn && sim.isFly();
+    if (!sim.isFly()) return;
+    if (!sim.landed && sim.t - trailT >= 0.05) {
+      trailT = sim.t;
+      if (trailCount >= TRAIL_N) { trailPos.copyWithin(0, 3); trailCol.copyWithin(0, 3); trailTime.copyWithin(0, 1); trailCount = TRAIL_N - 1; }
+      trailPos.set([sim.pos[1], -sim.pos[2], -sim.pos[0]], trailCount * 3); trailTime[trailCount] = sim.t; trailCount++;
+      trailGeo.attributes.position.needsUpdate = true;
+    }
+    _tc.set(colors.cmd);
+    const fade = app.camMode === 'pilot';
+    let start = 0;
+    if (fade) { while (start < trailCount && sim.t - trailTime[start] > TRAIL_FADE) start++; }
+    for (let i = start; i < trailCount; i++) {
+      const k = fade ? clamp((sim.t - trailTime[i]) / TRAIL_FADE, 0, 1) : 0;
+      _c.copy(_tc).lerp(_bg, k); trailCol[i * 3] = _c.r; trailCol[i * 3 + 1] = _c.g; trailCol[i * 3 + 2] = _c.b;
+    }
+    trailGeo.attributes.color.needsUpdate = true;
+    trailGeo.setDrawRange(start, trailCount - start);
+  }
+  $('chkTrail').addEventListener('change', (e) => { trailOn = e.target.checked; });
+  $('btnTrail').addEventListener('click', () => { clear(); bus.emit('trail:cleared'); });
+  bus.on('sim:reset', clear);
+  bus.on('tick:frame', update);
+  DEBUG.trail = { count: () => trailCount, line };
+  return { count: () => trailCount, line, clear };
+})();
+
+// ---------- [Camera] 視角：環繞 / 追尾 / 飛手 ----------
+// 依賴：camera、view、sim、app、MODES（view、camY）、EXAM.pilot
+// 訂閱：mode:change、cam:change、view:preset（套用預設視角）、fly:refly（鏡頭回起始位置）、tick:frame（放置鏡頭）
+// 提供：Camera.pilotView（除錯用）
+const Camera = (() => {
+  // 環繞視角（球座標軌道）
+  const cam = { az: 0, el: 12 * DEG, dist: 2.4, target: new THREE.Vector3(0, 2, 0) };
+  // 飛手視角：站在 P 位置、眼高 1.6 m；轉頭跟隨飛機，但保留不動區，讓飛機在畫面中移動
+  const pilotView = { yaw: 0, pitch: -20 * DEG, dzYaw: 20 * DEG, dzPitch: 12 * DEG, fov: 75 };
+  let psiSmooth = 0;
+  const isPilot = () => sim.isFly() && app.camMode === 'pilot';
+
+  // 視角：[方位角, 仰角, 距離]。方位角 0 = 從正後方（南方）看，roll 與 pitch 都用斜後方 45°，同一個畫面看得到兩種轉動
+  function preset() {
+    if (isPilot()) { pilotView.yaw = 0; pilotView.pitch = Math.atan2(-EXAM.pilot.eye, -EXAM.pilot.y); }   // 正對 H
+    const p = modeView();
+    cam.az = p[0] * DEG; cam.el = p[1] * DEG; cam.dist = p[2];
+  }
+  function pilotCamera(dt) {
+    const cx = EXAM.pilot.x, cy = EXAM.pilot.y, ch = EXAM.pilot.eye;
+    camera.position.set(cx, ch, -cy);
+    const dx = sim.pos[1] - cx, dy = sim.pos[0] - cy, dh = Math.max(0.15, -sim.pos[2]) - ch;
+    const tYaw = Math.atan2(dx, dy), tPitch = Math.atan2(dh, Math.hypot(dx, dy));
+    const follow = (cur, tgt, dz) => { const e = wrapPi(tgt - cur); if (Math.abs(e) <= dz) return cur; return cur + (e - Math.sign(e) * dz) * Math.min(1, dt * 5); };
+    pilotView.yaw = follow(pilotView.yaw, tYaw, pilotView.dzYaw);
+    pilotView.pitch = clamp(follow(pilotView.pitch, tPitch, pilotView.dzPitch), -70 * DEG, 60 * DEG);
+    const cp = Math.cos(pilotView.pitch);
+    camera.lookAt(cx + Math.sin(pilotView.yaw) * cp, ch + Math.sin(pilotView.pitch), -(cy + Math.cos(pilotView.yaw) * cp));
+  }
+  function place(dt) {
+    const wantFov = isPilot() ? pilotView.fov : 42;
+    if (camera.fov !== wantFov) { camera.fov = wantFov; camera.updateProjectionMatrix(); }
+    if (isPilot()) { pilotCamera(dt); return; }
+    let az = cam.az;
+    const camY = curMode().camY;
+    if (camY === 'follow') {
+      cam.target.set(sim.pos[1], Math.max(0.3, -sim.pos[2]), -sim.pos[0]);
+      if (app.camMode === 'chase') {           // 追尾：鏡頭跟著機頭方向，拖曳只調整相對角度
+        const d = wrapPi(sim.eul[2] - psiSmooth); psiSmooth = wrapPi(psiSmooth + d * Math.min(1, dt * 3));
+        az = cam.az - psiSmooth;
+      }
+    } else {
+      cam.target.set(0, camY === 'hover' ? HOVER_ALT.att : Math.max(camY, -sim.pos[2]), 0);
+    }
+    camera.position.set(cam.target.x + cam.dist * Math.cos(cam.el) * Math.sin(az), cam.target.y + cam.dist * Math.sin(cam.el), cam.target.z + cam.dist * Math.cos(cam.el) * Math.cos(az));
+    camera.lookAt(cam.target);
+  }
+  // 滑鼠 / 觸控拖曳旋轉、滾輪 / 雙指縮放（飛手視角不能拖）
+  (function bindOrbit() {
+    const pts = new Map(); let pinch0 = 0, dist0 = 0;
+    view.addEventListener('pointerdown', (e) => { if (e.target.closest('button, label, input') || isPilot()) return; view.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch0 = Math.hypot(a[0] - b[0], a[1] - b[1]); dist0 = cam.dist; } });
+    view.addEventListener('pointermove', (e) => {
+      if (!pts.has(e.pointerId)) return;
+      const prev = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+      if (pts.size === 1) { cam.az -= (e.clientX - prev[0]) * 0.008; cam.el = clamp(cam.el + (e.clientY - prev[1]) * 0.006, -5 * DEG, 89 * DEG); }
+      else if (pts.size === 2) { const [a, b] = [...pts.values()]; const d = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch0 > 0) cam.dist = clamp(dist0 * pinch0 / d, 0.8, 20); }
+    });
+    const end = (e) => { pts.delete(e.pointerId); pinch0 = 0; };
+    view.addEventListener('pointerup', end); view.addEventListener('pointercancel', end);
+    view.addEventListener('wheel', (e) => { e.preventDefault(); cam.dist = clamp(cam.dist * Math.exp(e.deltaY * 0.001), 0.8, 20); }, { passive: false });
+  })();
+  bus.on(['mode:change', 'cam:change', 'view:preset'], preset);
+  bus.on('fly:refly', () => { psiSmooth = 0; preset(); });
+  bus.on('tick:frame', place);
+  DEBUG.pilotView = pilotView;
+  return { pilotView, preset };
+})();
+
+// ---------- [Fullscreen] 全螢幕練習 ----------
+// 優先用瀏覽器全螢幕；不允許時（部分手機或內嵌頁面）改成填滿視窗
+// 依賴：view
+// 發出：view:resize
+const Fullscreen = (() => {
+  function isFull() { return document.fullscreenElement === view || view.classList.contains('vp-max'); }
+  function syncBtn() { $('btnFull').textContent = isFull() ? '退出全螢幕' : '全螢幕'; bus.emit('view:resize'); }
+  async function toggle() {
+    if (isFull()) {
+      if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch (e) { /* 忽略 */ } }
+      view.classList.remove('vp-max'); syncBtn(); return;
+    }
+    try {
+      if (!view.requestFullscreen) throw new Error('no fullscreen');
+      await view.requestFullscreen();
+    } catch (e) { view.classList.add('vp-max'); }
+    syncBtn();
+  }
+  $('btnFull').addEventListener('click', toggle);
+  document.addEventListener('fullscreenchange', syncBtn);
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyF' && !typingTarget(e)) { e.preventDefault(); toggle(); }
+    if (e.code === 'Escape' && view.classList.contains('vp-max')) { view.classList.remove('vp-max'); syncBtn(); }
+  });
+  return { toggle, isFull };
+})();
+
+// ---------- [Footer] 頁尾署名與原始版本提示 ----------
+// 依賴：無（只讀網址）
+// 不在 adevlog.github.io（也不是本機開發）時，多顯示一行原始版本連結；只是提示，不影響任何功能
+(() => {
+  const ORIGIN_HOST = 'adevlog.github.io';
+  const h = location.hostname, local = location.protocol === 'file:' || h === 'localhost' || h === '127.0.0.1' || h === '';
+  const el = $('originNote');
+  if (el) el.hidden = local || h === ORIGIN_HOST;
+})();
+
+// ---------- [主迴圈] ----------
+// 每幀：tick:input → 物理步進 → tick:frame → tick:render；每 0.1 s tick:ui；每 1/30 s tick:draw
+let lastTs = performance.now(), uiAcc = 0, chartAcc = 0;
+function frame(ts) {
+  const dt = Math.min(0.05, (ts - lastTs) / 1000); lastTs = ts;
+  bus.emit('tick:input', dt);
+  if (!app.paused) { const steps = Math.round(dt * app.speed / DT); for (let i = 0; i < steps; i++) sim.step(); }
+  bus.emit('tick:frame', dt);
+  bus.emit('tick:render');
+  uiAcc += dt; chartAcc += dt;
+  if (uiAcc > 0.1) { uiAcc = 0; bus.emit('tick:ui'); }
+  if (chartAcc > 1 / 30) { chartAcc = 0; bus.emit('tick:draw'); }
+  requestAnimationFrame(frame);
+}
+
+// ---------- [啟動] ----------
+Controls.applyAmpDefaults();
+bus.emit('mode:change');      // 讓所有模組依目前模式建立畫面（參數、文字、視角、測試架）
+bus.emit('view:resize');
+bus.emit('tick:ui');
+bus.emit('tick:draw');
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
