@@ -15,4 +15,5 @@ node --check inline.js
 python3 regress.py | tail -1
 python3 deltest.py
 python3 origin.py
+python3 hover_test.py | tail -1
 exit $fail

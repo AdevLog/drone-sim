@@ -1,0 +1,17 @@
+PASS 理想懸停 5 s 不動                                   {"dist":0,"h":2}
+PASS M1 90%：有 I 項 → 姿態拉回                           {"eul":[0,0,-0.05],"dist":0.8}
+PASS M1 90%：I=0 → roll/pitch/yaw 固定偏角              {"eul":[1.34,-1.34,-2.32]}
+PASS M1 90%：I=0 → 越飄越遠                             {"withI":0.8,"noI":5.74}
+PASS Stabilized + M1 90% → 推力不足掉高                  {"h":0}
+PASS 內迴圈 P 太小 → 晃動大（推一下）                           {"default":6.9,"P004":28.97}
+PASS 理想感測器：D 再大也不抖                                 {"pwmStd":0}
+PASS 有雜訊：D 調大 → 馬達 PWM 抖動變大                        {"D0003":10.23,"D002":38.48}
+PASS 有雜訊：P 調大 → 馬達 PWM 抖動變大                        {"P015":10.23,"P06":16.49}
+PASS 只用陀螺儀 + 偏差 0.5°/s → 積分漂移                      {"rms":6.17,"max":10.12,"crashed":false,"bias":0}
+PASS 只用加速度計 → 估測角度帶雜訊                              {"rms":3.32,"max":10.95,"crashed":false,"bias":0}
+PASS 只用加速度計 + 推搖桿 → 估測失準                           {"rms":87.77,"max":179.56,"crashed":true,"bias":0}
+PASS Kalman（預設參數）懸停估測誤差小                           {"rms":0.54,"max":1.26,"crashed":false,"bias":0.11}
+PASS Kalman（預設參數）推搖桿仍可用                            {"rms":1.45,"max":2.9,"crashed":false,"bias":-0.41}
+PASS Kalman R 太小（太信加速度計）→ 推搖桿失準                    {"rms":30.03,"max":60.49,"crashed":false,"bias":-14.83}
+PASS 加速度計偏差：估測關 → 不影響                              {"dist":0.05}
+PASS 加速度計偏差：Kalman 開 → 把傾斜當水平、飄走                   {"dist":1.86,"roll":1.59}

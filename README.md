@@ -1,49 +1,54 @@
-# 四旋翼控制實驗台 Quadrotor Control Lab
+# Quadcopter Control Lab
 
-**▶ 線上使用：https://adevlog.github.io/drone-sim/**
+**English** | [繁體中文](README.zh-TW.md)
 
-在瀏覽器裡看懂四旋翼的控制鏈：命令 → 串級 PID → mixer → 馬達 → 機體 → 回授。每個訊號都看得到、每個參數都調得到，調完立刻看到飛機怎麼反應。單一 HTML 檔，不需要安裝。
+**▶ Try it online: https://adevlog.github.io/drone-sim/**
 
-## 可以做什麼
+A browser-based quadcopter simulator for understanding how PID gains and sensors affect flight. Every signal in the chain — command → cascaded PID → mixer → motors → airframe → sensors → feedback — is visible and adjustable, and you see the aircraft respond immediately. Single HTML file, nothing to install. (The interface is in Traditional Chinese.)
 
-| 模式 | 內容 |
+## What you can do
+
+| Mode | Contents |
 |---|---|
-| 單軸測試架（Roll / Pitch / Yaw / 油門） | 其他軸鎖住，只看一個通道的串級 PID；方波、步階、正弦命令；上升時間、過衝、穩定時間、穩態誤差 |
-| 三軸姿態 | 三軸同時控制、軸間耦合、高度保持與傾斜補償；PFD 主飛行顯示器 |
-| 自由飛行 | PX4 飛行模式 Acro / Stabilized / Altitude / Position；遙控解鎖、墜機判定、軌跡 |
-| 考照練習 | 依 AC107-005D 圖 9 的專業基本級多旋翼場地；飛手視角、懸停 5 秒計時、容許帶與高度提示 |
+| Single-axis test rig (Roll / Pitch / Yaw / Throttle) | Other axes locked; one channel's cascaded PID with square, step and sine commands; rise time, overshoot, settling time, steady-state error |
+| 3-axis attitude | All three axes at once, cross-coupling, altitude hold and tilt compensation; primary flight display (PFD) |
+| Free flight | PX4 flight modes Acro / Stabilized / Altitude / Position; stick arming, crash detection, flight trail |
+| Exam practice | Taiwan CAA professional basic-class multirotor test field (AC107-005D fig. 9); pilot's-eye view, 5-second hover timer, tolerance band and altitude cues |
+| Hover tuning | Starts hovering at 2 m with the camera locked on the aircraft; origin marker, target point and drift line; hover metrics (drift, tilt, rate jitter, PWM jitter) |
 
-- 點方塊圖任一格，會跳出該環節的公式，並代入目前的即時數值。
-- 參數使用 PX4 名稱（`MC_ROLLRATE_P`、`MPC_XY_VEL_P_ACC`…），可切換「PX4 預設」與「消費級」兩種操控手感。
+- Click any block in the signal diagram to see its formula with the current live values substituted.
+- Parameters use PX4 names (`MC_ROLLRATE_P`, `MPC_XY_VEL_P_ACC`, …); two handling profiles: PX4 default and consumer-style.
+- **Motors & sensors panel** (3-axis, free flight, hover tuning): per-motor efficiency (PX4 numbering), gyro noise / bias / low-pass cutoff, accelerometer noise / bias, and attitude estimation using the gyro, the accelerometer, or both (simplified Kalman filter), with a true-vs-estimated angle chart.
+- Things to try: weaken one motor and set the rate I gains to 0 → the drone settles at a fixed tilt and drifts away; lower rate P → visible wobble; raise D with gyro noise → motor output jitter; gyro-only estimation with a gyro bias → integration drift.
 
-## 操作（美國手 / Mode 2）
+## Controls (Mode 2)
 
-| 動作 | 鍵盤 | Xbox 手把 / 畫面搖桿 |
+| Action | Keyboard | Xbox controller / on-screen sticks |
 |---|---|---|
-| 油門 | W / S | 左搖桿上下 |
-| 偏航 Yaw | A / D | 左搖桿左右 |
-| 俯仰 Pitch | ↑ / ↓ | 右搖桿上下 |
-| 滾轉 Roll | ← / → | 右搖桿左右 |
-| 解鎖 | 按住 S + D 約 1 秒 | 左搖桿壓到右下角約 1 秒 |
-| 上鎖 | 落地後按住 S + A 約 1 秒 | 左搖桿壓到左下角約 1 秒 |
-| 全螢幕 / 重飛 | F / R | 畫面右上角按鈕 |
+| Throttle | W / S | Left stick up/down |
+| Yaw | A / D | Left stick left/right |
+| Pitch | ↑ / ↓ | Right stick up/down |
+| Roll | ← / → | Right stick left/right |
+| Arm | Hold S + D for about 1 s | Hold left stick bottom-right for about 1 s |
+| Disarm | After landing, hold S + A for about 1 s | Hold left stick bottom-left for about 1 s |
+| Fullscreen / Re-fly | F / R | Buttons at the top right of the 3D view |
 
-手把需要在 HTTPS 網頁或本機開啟時才能讀取（線上版可直接使用）。
+Gamepads are only readable on HTTPS pages or local files (the online version works).
 
-## 本機執行
+## Run locally
 
-下載 `index.html`，用 Chrome / Edge / Firefox 開啟即可。three.js 從 cdnjs 載入，需要網路。
+Download `index.html` and open it in Chrome, Edge or Firefox. three.js is loaded from cdnjs, so an internet connection is needed.
 
-## 文件與測試
+## Docs and tests
 
-- [ARCHITECTURE.md](ARCHITECTURE.md)：程式結構、模組地圖、事件表、物理與控制器設計理由、新增 / 刪除功能的步驟。
-- [tests/](tests/)：核心計算測試（node）與瀏覽器回歸測試（playwright），執行 `tests/run_all.sh`。
+- [ARCHITECTURE.md](ARCHITECTURE.md) (Traditional Chinese): program structure, module map, event table, design rationale for the physics, controllers and sensors, and how to add or remove a feature.
+- [tests/](tests/): core computation tests (node) and browser regression tests (playwright); run `tests/run_all.sh`.
 
-## 說明
+## Disclaimer
 
-本專案為控制原理教學用途。物理參數為典型 1.5 kg 四旋翼的估計值，「消費級」手感的數值是依考照練習挑選，**不是任何特定機型的實測數據**，也不能取代實機訓練與術科考試規範。
+For teaching control principles only. Physical parameters are estimates for a typical 1.5 kg quadcopter, and the consumer handling values were chosen for exam practice. **They are not measured data from any specific aircraft** and do not replace real flight training or the official test rules. Magnetometer, barometer and GPS are currently assumed perfect.
 
-## 授權
+## License
 
 [MIT License](LICENSE) © 2026 [AdevLog](https://github.com/AdevLog)
-可自由使用、修改與散布，請保留版權聲明與授權全文。
+Free to use, modify and distribute; please keep the copyright notice and the license text.

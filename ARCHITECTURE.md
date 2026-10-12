@@ -1,12 +1,14 @@
-# 四旋翼控制實驗台 — ARCHITECTURE
+# 四旋翼控制實驗台 Quadcopter Control Lab — ARCHITECTURE
 
-一個在瀏覽器執行的四旋翼控制教學模擬器。目標是讓「命令 → 控制器 → mixer → 馬達 → 機體 → 回授」整條鏈的每個訊號都看得到、調得到。
+一個在瀏覽器執行的四旋翼控制教學模擬器。目標是讓「命令 → 控制器 → mixer → 馬達 → 機體 → 感測器 → 回授」整條鏈的每個訊號都看得到、調得到。
+
+**定位：看懂 PID 和感測器怎麼影響飛行。** 不做實機燒機測試、也不做物理引擎類的功能（碰撞、地形、相機影像）；那些交給 Gazebo + PX4 SITL。新增功能前先確認是否偏離這個定位。
 
 - 檔案：`index.html`（單一檔案，無建置步驟，瀏覽器直接開啟；claude.ai 預覽版檔名為 `drone_sim.html`，內容相同）
 - 線上版：https://adevlog.github.io/drone-sim/ （GitHub Pages）
 - 原始碼：https://github.com/AdevLog/drone-sim ，MIT License，© 2026 AdevLog
 - 外部依賴：three.js r128（cdnjs）
-- 目前進度：第 3.7 批（GitHub 發布：完整 HTML 文件結構、頁尾署名、原始版本提示、測試腳本進 repo）
+- 目前進度：第 4 批（感測器與擾動：馬達效率、陀螺儀 / 加速度計誤差、簡化版 Kalman 姿態估測、懸停調參模式）
 
 ## 分批計畫
 
@@ -23,8 +25,15 @@
 | 3.5 | 亮色版圖形改用鮮豔色 `--cmd-vivid` / `--act-vivid`（線條、圓點、長條、滑桿、軌跡）；文字維持較深的 `--cmd` / `--act` | ✅ 完成 |
 | 3.6 | 重構：UI 拆成獨立模組區塊，彼此只透過事件匯流排 `bus` 溝通；模式差異集中到 `MODES` / `KINDS` 登錄表；SIM-CORE 不動 | ✅ 完成 |
 | 3.7 | 發布到 GitHub Pages：補上 `<!doctype html>`、`<head>`、charset 與 viewport；檔頭版權註解；頁尾 © AdevLog · MIT License；非原站時顯示原始版本連結；`tests/` 收進 repo | ✅ 完成 |
-| 4 | 環境與地面站：風（風速、風向、陣風）、感測器雜訊與偏差、互補濾波，全部可調；俯視地圖、CSV 匯出 | 待做 |
+| 4.1 | README 中英文版（`README.md` 英文為預設、`README.zh-TW.md`），標題下方互相切換；英文名稱 Quadrotor → Quadcopter；頁尾說明文字固定 | ✅ 完成 |
+| 4.2 | SIM-CORE：四顆馬達效率 `S.env.motorEff`；陀螺儀（雜訊、零點偏差、低通濾波）；加速度計（雜訊、零點偏差）；姿態估測（關 / 只用陀螺儀 / 只用加速度計 / 簡化版 Kalman）；控制器改讀量測與估測值；`hover` 空中起始 | ✅ 完成 |
+| 4.3 | 懸停調參模式：2 m 空中起始、Altitude、鏡頭鎖定飛機、原點十字與 2 m 目標點、偏移線、懸停指標 | ✅ 完成 |
+| 4.4 | 馬達與感測器面板（PX4 編號四軸圖 + 4 條效率滑桿、感測器誤差滑桿、估測開關與採用勾選、Kalman 參數）；姿態估測圖（真實 / 估測 / 只靠陀螺儀 / 只靠加速度計） | ✅ 完成 |
+| 4.x | 風（定常風、陣風）：取代固定往東推的「位置擾動」 | 之後再做 |
+| 4.x | 磁力計、氣壓高度計、GPS 的誤差模型（目前假設完美） | 之後再做 |
 | 5 | 航點任務 | 待做 |
+
+已討論後**拿掉**：俯視地圖、CSV 匯出（與定位無關；航點任務若需要地圖點選時再評估）。
 
 ## 程式結構
 
@@ -38,6 +47,9 @@
      - `S.ch[0..3]`：四個控制通道（roll、pitch、yaw、高度）各自的積分、D 濾波、誤差與 PID 各項
      - `attCtrl(name)`、`thrCtrl()`：單一通道的串級控制；`control(dtc)`：依模式呼叫通道、算總推力
      - `mix()`：mixer；`physics(dt)`：馬達動態 + 6-DoF 剛體；`record()`：曲線與步階區段
+   - `SENSOR_DEFS`、`SENSOR_PRESETS`、`defaultSensors()`、`makeRng()`（第 4 批）：感測器誤差與估測設定、預設組合、固定種子亂數
+     - `S.env.motorEff`：四顆馬達效率；`S.sens`：感測器設定
+     - `sampleSensors()`：每個控制週期產生陀螺儀 / 加速度計量測與估測姿態（`S.wm`、`S.am`、`S.ea`）；`kalman()`：單軸簡化版 Kalman
    - `stepMetrics()`、`sineMetrics()`：響應指標
 2. **UI**：由多個**模組區塊**組成（見下節）。
 
@@ -80,9 +92,13 @@
 | Camera | 環繞 / 追尾 / 飛手視角、拖曳與縮放 | `mode:change`、`cam:change`、`view:preset`、`fly:refly`、`tick:frame` | — | `preset()` |
 | Fullscreen | 全螢幕按鈕、F 鍵、`.vp-max` 備援 | — | `view:resize` | `toggle()` |
 | Footer | 頁尾署名；網址不是 `adevlog.github.io`（也不是本機開發）時顯示原始版本連結 | — | — | — |
+| SensorPanel（第 4 批） | 馬達與感測器面板：四軸圖與效率滑桿、感測器滑桿（由 `SENSOR_DEFS` 產生）、估測開關、懸停指標 | `CONFIG_EVENTS`、`tick:ui` | `sensor:change` | `sync()` |
+| ChartKit（第 4 批） | 通用曲線圖 `drawChart()`，由 Charts 移出，供 Charts 與 EstChart 共用 | — | — | `drawChart()` |
+| EstChart（第 4 批） | 姿態估測圖：真實、估測、只靠陀螺儀、只靠加速度計 | `CONFIG_EVENTS`、`tick:draw` | — | `refresh()` |
+| HoverRef（第 4 批） | 懸停調參的原點十字、2 m 目標點、偏移線 | `tick:frame` | — | — |
 | 主迴圈 / 啟動 | `frame()`；啟動時發 `mode:change` 讓所有模組建立畫面 | — | `tick:*` | — |
 
-刻意保留的直接依賴（都是「單向、只讀或呼叫公開函式」）：FlyPanel → `Controls.resetSim()`；Camera → `EXAM.pilot`；Exam / DroneModel → `textSprite()`、`flatText()`；所有模組 → `sim`、`app`、`colors`、登錄表。
+刻意保留的直接依賴（都是「單向、只讀或呼叫公開函式」）：FlyPanel → `Controls.resetSim()`；Camera → `EXAM.pilot`；Exam / DroneModel → `textSprite()`、`flatText()`；Charts / EstChart → `drawChart()`；所有模組 → `sim`、`app`、`colors`、登錄表。
 
 ### 事件表
 
@@ -96,6 +112,7 @@
 | `cam:change` | 鏡頭模式 `app.camMode` 改變 | Controls |
 | `profile:change` | 操控手感或整組參數被換掉（含「全部回預設」） | Controls |
 | `option:change` | 高度保持等會影響參數面板的選項 | Controls |
+| `sensor:change` | 馬達效率、感測器誤差或估測設定改變 | SensorPanel |
 | `view:preset` | 要求回到預設視角 | Controls（重設視角） |
 | `fly:refly` | 重飛：鏡頭回起始位置 | FlyPanel |
 | `trail:cleared` | 使用者按了清除軌跡 | Trail |
@@ -107,7 +124,7 @@
 | `tick:ui` | 每 0.1 s：數字面板 | 主迴圈、啟動 |
 | `tick:draw` | 每 1/30 s：Canvas 圖 | 主迴圈、啟動 |
 
-`CONFIG_EVENTS` = `sim:reset`、`mode:change`、`wave:change`、`focus:change`、`fmode:change`、`cam:change`、`profile:change`、`option:change`。訂閱者之間不依賴先後順序；同一個動作可能讓某模組更新兩次（例如切換鏡頭同時發 `profile:change` 與 `cam:change`），更新都是冪等的，所以無害。
+`CONFIG_EVENTS` = `sim:reset`、`mode:change`、`wave:change`、`focus:change`、`fmode:change`、`cam:change`、`profile:change`、`option:change`、`sensor:change`。訂閱者之間不依賴先後順序；同一個動作可能讓某模組更新兩次（例如切換鏡頭同時發 `profile:change` 與 `cam:change`），更新都是冪等的，所以無害。
 
 ### 如何刪除一個功能
 
@@ -115,7 +132,7 @@
 2. 刪掉 HTML 裡對應的元素（區塊內 `$('…')` 用到的 id）。
 3. 看模組地圖的「對外提供」欄，確認沒有別人用到；目前只有 Controls、Scene、資料與登錄表被其他模組直接使用。
 
-已用自動測試驗證：MotorsPanel、LivePanel、FlyPanel、Charts、PFD、Popover、Input、Rig、Trail、Fullscreen、DroneModel、Exam、Camera 任一區塊整段刪掉，頁面仍正常執行、切換模式不報錯。
+已用自動測試驗證：MotorsPanel、LivePanel、FlyPanel、Charts、PFD、Popover、Input、Rig、Trail、Fullscreen、DroneModel、Exam、Camera、SensorPanel、EstChart、HoverRef 任一區塊整段刪掉，頁面仍正常執行、切換模式（含懸停調參）不報錯。ChartKit 被 Charts、EstChart 使用，刪除前要先刪這兩個。
 
 ### 如何新增一個功能
 
@@ -129,7 +146,7 @@
 ### 如何新增一個觀察模式
 
 1. SIM-CORE：讓 `sim.axis` 接受新值，`control()` 決定要跑哪些通道。
-2. `MODES` 加一筆：`kind`（沿用 `single` / `att3` / `fly`，或在 `KINDS` 新增類型）、`view`、`rig`（沿用或在 Rig 的 `RIG_BUILDERS` 加樣式）、`camY`。
+2. `MODES` 加一筆：`kind`（沿用 `single` / `att3` / `fly`，或在 `KINDS` 新增類型）、`view`、`rig`（沿用或在 Rig 的 `RIG_BUILDERS` 加樣式）、`camY`。選用欄位：`camSeg`（鏡頭切換）、`pilotCam`（飛手視角與消費級規則）、`exam`（考照場地）、`sensors`（感測器預設名稱）、`fmode`（進入時的飛行模式）、`hoverRef`（原點與目標點）、`axisLabel`。
 3. `AXIS_INFO` 加名稱、測試架說明與 tips。
 4. HTML 的 `segAxis` 加一顆按鈕。面板、圖表、鏡頭、測試架會自動依登錄表顯示。
 
@@ -381,6 +398,104 @@ Tᵢ = F/4 − yᵢ·L/(4d) + xᵢ·M/(4d) + sᵢ·N/(4·cQ)
 - 穩態誤差：區段最後 15% 的平均誤差
 - 正弦命令：追蹤誤差 RMS、振幅比
 
+## 感測器、馬達效率與姿態估測（第 4 批）
+
+### 為什麼要加
+
+第 4 批以前，控制器讀的全是**真實值**（等於一顆完美的陀螺儀與姿態感測器）。實測發現兩個課堂現象重現不了：
+
+| 現象（課堂 / Betaflight 示範） | 完美感測器下的結果 | 缺什麼 |
+|---|---|---|
+| 拔掉 I → 越來越偏 | I = 0 也完全不偏 | **持續的偏差**：模擬太對稱，沒有東西推它 |
+| PID 太靈敏 → 一直修正而抖動 | 內迴圈 P 從 0.15 調到 2.5 都不抖 | **雜訊 + 濾波延遲**：真機的抖動是控制器追著有雜訊、有延遲的量測值修正 |
+| P 太小 → 晃動 | ✅ 推一下就能看到 | — |
+
+所以加入：馬達效率（持續偏差的來源）、陀螺儀與加速度計誤差模型、姿態估測。
+
+### 模型
+
+```
+陀螺儀：  ω_raw = ω_真實 + b_g + n_g        n_g ~ N(0, σ_g)，三軸同一個 b_g
+          ω_量測 = 一階低通(ω_raw, IMU_GYRO_CUTOFF)      0 Hz = 不濾波
+加速度計：f_量測 = Cᵀ(a − g) + b_a + n_a    比力（推力與阻力造成的加速度，機體座標）；b_a 加在前後、左右兩軸
+加速度計角度：φ_acc = atan2(−f_y, −f_z)，θ_acc = atan2(f_x, √(f_y² + f_z²))
+推力：    T_i = η_i · k_T · Ω_i²            η = 馬達效率；mixer 與控制器不知道 η
+```
+
+- 取樣在控制迴路（250 Hz），每次 `control()` 先 `sampleSensors()`，再算控制。
+- 亂數用固定種子（`makeRng`），同樣設定每次重設都得到同樣的雜訊序列，方便比較與測試。
+- **全部誤差為 0 且估測關閉時（`S.sensorsIdeal()`），控制器拿到的值與真實值逐位元相同**，舊的核心測試輸出完全不變。
+- 雜訊的預設值（3 °/s）遠大於晶片規格（講義 Bosch IMU：0.008 dps/√Hz，約 0.1 °/s），因為飛行中的「雜訊」主要來自**機架與馬達震動**。這也是飛控需要陀螺儀濾波器的原因。
+
+### 姿態估測
+
+開關：關 = 控制器拿真實角度；開 = 拿估測角度。開啟後勾選採用哪顆感測器（至少一個）：
+
+| 採用 | 方法 | 會出現的問題（已用測試驗證） |
+|---|---|---|
+| 只有陀螺儀 | 角速度積分 | 零點偏差 0.5 °/s → 20 s 內估測誤差 > 10°，飛機跟著歪、飄走（積分漂移，與實驗報告的現象相同） |
+| 只有加速度計 | 由重力方向直接算角度 | 雜訊直接變成角度雜訊（RMS 約 3°）；推搖桿時加速度計量不出傾斜（多旋翼推力方向跟著機身轉），估測失準甚至失控 |
+| 兩個都用 | 簡化版 Kalman（單軸，狀態 = 角度、陀螺儀偏差；參數 Q_angle、Q_bias、R_measure） | 預設參數懸停誤差 RMS 約 0.5°、推搖桿最大約 3°；R 太小（太信加速度計）→ 推搖桿時失準 |
+
+- 只估 roll、pitch。**航向用真實值**：加速度計量不出 yaw（水平轉圈重力方向不變），要靠磁力計；磁力計目前假設完美。
+- 高度、位置、速度用真實值（氣壓計、GPS 假設完美）。
+- 估測以機體角速度近似尤拉角速度（小角度成立），一般 IMU 教學版本的做法。
+- 切換估測設定時 `S.resetEstimator()`：估測值與陀螺儀積分回到目前真實姿態、Kalman 狀態歸零。
+- Kalman 預設 Q_angle 0.001、Q_bias 0.0003、R_measure 30：由測試掃描挑出「懸停與推搖桿都穩」的組合。限制：Kalman 只融合陀螺儀與加速度計，懸停時的小加速度會讓它把偏差估錯；這正是 PX4 EKF2 還要融合 GPS 速度的原因。
+
+### 為什麼選 Kalman 而不是互補濾波
+
+| 系統 | 姿態估測 | 原因 |
+|---|---|---|
+| 課程講義（AHRS 實驗） | Kalman filter | XSENS 姿態模組 |
+| PX4（課程與專案） | EKF2（擴展 Kalman） | 要融合 GPS、氣壓計、磁力計做導航 |
+| Betaflight | Mahony（互補濾波類） | 穿越機多用 Acro，姿態估測只在 Angle 模式與 OSD 用到；8 kHz 迴路要計算量最小的方法 |
+| 地面站（QGC、Mission Planner、Betaflight Configurator） | 不做濾波 | 只顯示飛控傳來的數據、修改參數 |
+
+所以採用簡化版 Kalman，貼近課程與 PX4。互補濾波沒有做。
+
+### 課程對照
+
+| 項目 | 課程中 |
+|---|---|
+| 陀螺儀雜訊、零點偏差 | 有：《感測器量測介紹_2》IMU 規格表（Noise density、Zero-rate offset ±0.5 dps）；各組報告的「積分漂移」 |
+| 加速度計零點偏差 | 有：同一張規格表 Zero-g offset ±20 mg（約 1.2° 傾斜誤差） |
+| 陀螺儀濾波器 | 部分：規格表有晶片內建 Filter BW，飛控濾波為延伸 |
+| Kalman | 有：AHRS 實驗講義 |
+| 馬達不平衡 | 延伸：用來教 I 項 |
+| 風 | 延伸：AC107 術科規範「應具備環境干擾修正能力」；之後再做 |
+
+### 量到真實感測器時
+
+靜止錄一段數據：平均值 = 零點偏差、標準差 = 雜訊，填進滑桿即可呈現同樣的誤差規格。**沒有模擬**的誤差：靈敏度誤差（scale factor）、溫度漂移、偏差隨時間變動（random walk）、量程飽和、交叉軸誤差、震動頻譜。
+
+### 馬達效率
+
+- 四顆各一條滑桿（60–100%），面板依實際位置排列，並畫 PX4 編號的俯視圖（M1 右前 CCW、M2 左後 CCW、M3 左前 CW、M4 右後 CW）。與 Betaflight 只有編號不同、轉向配置相同（BF1 = M4、BF2 = M1、BF3 = M2、BF4 = M3）；依使用者決定維持 PX4 編號。
+- 一顆馬達變弱會同時產生 roll、pitch（位置）與 yaw（反扭力）力矩，所以能同時看到三軸 PID 的反應。
+- 只有 P 時必須留一點誤差才有修正力：誤差 ≈ 偏差力矩 ÷（內迴圈 P × 外迴圈 P）。M1 90%、I = 0：roll / pitch 各偏約 1.3°、yaw 偏約 2.3°，Altitude 模式下 8 s 漂約 6 m（有 I 時 0.8 m）。D 對固定偏差沒有幫助。
+
+### 懸停調參模式（`hover`）
+
+- SIM-CORE：`S.isFly()` 對 `fly` 與 `hover` 都成立（同一套飛行控制與 6 自由度運動）；`S.isHover()` 時 `reset()` 讓飛機已解鎖、在 2 m、鎖定高度與原點、搖桿置中。
+- 預設 **Altitude**（原本討論為 Stabilized）：實測 Stabilized + 馬達不平衡時總推力不足，8 s 內掉到地面，會蓋過要觀察的姿態偏移；Altitude = Stabilized + 定高，水平仍沒有位置控制，偏移原樣顯示。可隨時切換。
+- 預設感測器 `SENSOR_PRESETS.real`（陀螺儀雜訊 3 °/s、濾波 80 Hz、加速度計雜訊 0.5 m/s²），其他模式預設 `ideal`。切換模式時套用該模式預設（沿用「切換情境就回預設」的規則）；重飛保留目前設定。
+- 鏡頭：固定方位的環繞鏡頭注視飛機（`MODES.hover.view`），沒有飛手 / 追尾切換、沒有考照場地。
+- 懸停指標（最近 1 秒）：水平偏移、傾斜角、角速度抖動（roll、pitch 標準差）、PWM 抖動（四顆標準差平均）。
+
+### 「太靈敏會抖」在本模擬的呈現方式（實測）
+
+| 設定（懸停調參預設感測器） | PWM 抖動 |
+|---|---|
+| 預設 | 約 10 µs |
+| `MC_ROLLRATE_P` 0.6 | 約 16 µs |
+| `MC_ROLLRATE_D` 0.02 | 約 38 µs（約 4 倍） |
+| 陀螺儀濾波 20 Hz（P 0.6） | 從 15 降到 10 µs，但延遲變大 |
+
+- 增益太大的抖動是**高頻、小幅度**的：主要看得到的是馬達輸出條跳動、「PWM 抖動」數值、角速度曲線變粗；3D 機身的傾角變化很小（< 0.5°）。真機也是如此（聽得到、摸得到馬達發燙，看不太出機身晃）。
+- 大幅度、看得見的晃動來自 **P 太小**（P 0.04 推一下最大偏約 29°；0.03 越晃越大）。
+- 在完美感測器下增益再大都很穩，因為模型裡唯一的延遲是 30 ms 馬達延遲與 250 Hz 取樣，而且輸出飽和會壓住振盪；這也是加入雜訊與濾波的原因。
+
 ## 已驗證的行為（node 測試，SIM-CORE）
 
 | 情境 | 結果 |
@@ -423,7 +538,8 @@ Tᵢ = F/4 − yᵢ·L/(4d) + xᵢ·M/(4d) + sᵢ·N/(4·cQ)
 
 - `tests/run_all.sh`：一次跑完全部測試。需要 node、python3、playwright。
 - `tests/core/*.js` + `tests/core/baseline/*.txt`：抽出 SIM-CORE 在 node 執行，輸出必須與 baseline 逐字相同。物理或控制器刻意改動時，確認新結果正確後再更新 baseline。
-- `tests/browser/regress.py`：70 項瀏覽器回歸測試；`deltest.py`：逐一刪除模組區塊後仍可執行；`origin.py`：原始版本提示。
+- `tests/core/core_sensors.js`（第 4 批）：17 項感測器、馬達效率、估測與懸停調參的行為檢查（PASS / FAIL 加實測數值），輸出同樣要與 baseline 一致。
+- `tests/browser/regress.py`：70 項瀏覽器回歸測試；`deltest.py`：逐一刪除模組區塊後仍可執行（含懸停調參）；`origin.py`：原始版本提示；`hover_test.py`（第 4 批）：24 項懸停調參與感測器面板測試。
 - 瀏覽器測試用 `tests/browser/three/three.min.js` 替身取代 three.js（不需要網路、不畫 3D），所以 3D 畫面本身仍需人工看一眼。
 - 沒有設定 GitHub Actions 自動執行；修改後手動執行。
 
@@ -445,21 +561,31 @@ Tᵢ = F/4 − yᵢ·L/(4d) + xᵢ·M/(4d) + sᵢ·N/(4·cQ)
 
 ## 保留與未使用
 
-- 擾動方向目前固定為正。第 4 批加入隨機陣風時再加入方向與隨機性。
+- 擾動方向目前固定為正。之後加入風（陣風）時再加入方向與隨機性。
 - `cbn()` 目前只供 3D 顯示；物理改用四元數。第 3 批的位置控制最後採用「加速度 → roll/pitch 角」的近似，沒有用到 `cbn()`；保留給第 5 批航點導引需要完整推力向量 → 姿態矩陣時使用。
 - `S.preArmChecks()`：飛控鎖（起飛前自檢）預留檢查點，目前沒有項目。
 - `FLY.manTilt`、`FLY.yawRate`、`FLY.velMan`：第 3.2 批起由 `PROFILES[...].stick` 取代，控制器不再讀取。保留作為 PX4 預設值的原始出處註記（與 `PROFILES.px4.stick` 數值相同）。
 - `VZ_MAX_UP` / `VZ_MAX_DN`：自由飛行的搖桿爬升速度改用手感設定；這兩個常數仍用於油門單軸、三軸模式與自由飛行鎖高後的外迴圈限幅。
-- 擾動的「位置」通道（`kickCh = 4`）固定往東推 15 N；第 4 批的風會取代它成為主要的水平擾動。
+- 擾動的「位置」通道（`kickCh = 4`）固定往東推 15 N；之後的風會取代它成為主要的水平擾動。
 - `S.tilt` 在高度保持關閉時也會計算，供彈出視窗顯示。
-- 第 3.6 批各模組 `return { … }` 匯出、但目前沒有其他模組呼叫的函式：`Controls.syncAll`、`ParamsPanel.build`、`StaticPanel.refresh`、`MotorsPanel.update`、`LivePanel.update`、`Charts.drawChart`、`PFD.draw`、`Popover.render` / `blockDetail`、`Input.statusText`、`Scene.resize`、`Theme.read`、`Rig.rebuild`、`Exam.reset`、`Trail.count` / `clear`、`Camera.preset`、`Fullscreen.toggle` / `isFull`。保留為模組的公開介面，方便除錯與將來拆檔；正常流程一律走事件。
+- 第 3.6 批各模組 `return { … }` 匯出、但目前沒有其他模組呼叫的函式：`Controls.syncAll`、`ParamsPanel.build`、`StaticPanel.refresh`、`MotorsPanel.update`、`LivePanel.update`、`PFD.draw`、`Popover.render` / `blockDetail`、`Input.statusText`、`Scene.resize`、`Theme.read`、`Rig.rebuild`、`Exam.reset`、`Trail.count` / `clear`、`Camera.preset`、`Fullscreen.toggle` / `isFull`。保留為模組的公開介面，方便除錯與將來拆檔；正常流程一律走事件。
 - 第 3.6 批重構造成的三個細微差異（其餘逐字相同，見下方驗證）：切換觀察軸 / 迴圈 / 波形時，現在也會把油門搖桿值歸到最低並清除懸停紀錄（以前只有「重設」會）；「全部回預設」後也會重畫說明文字；自由飛行時「機體動力學」彈出視窗改為正確顯示「陀螺耦合」說明（以前誤顯示「測試架鎖住其他軸」）。
+
+- 第 4 批：`SensorPanel.sync`、`EstChart.refresh`、`Exam.reset` 等匯出函式同上，保留為公開介面。`S.kfBias(k)` 目前只供測試讀取 Kalman 估到的偏差，保留給之後在面板顯示。
+- 第 4 批：`SENSOR_PRESETS` 目前只有 `ideal`、`real` 兩組；之後可依實測感測器新增（例如「手機 IMU」）。
+
+## 之後再做（第 4 批討論後保留）
+
+- 風：定常風（風速、風向）+ 陣風，取代固定方向的位置擾動
+- 磁力計誤差（航向估測與漂移）、氣壓高度計誤差（課程有實驗）、GPS 誤差；目前三者假設完美
+- 感測器的靈敏度誤差、溫度漂移、偏差隨時間變動、震動頻譜
 
 ## 目前刻意不做的
 
-- 感測器雜訊與狀態估測（控制器直接讀真實狀態）→ 第 4 批
+- 物理引擎類功能（碰撞、地形、相機影像）：交給 Gazebo + PX4 SITL
+- 互補濾波（Betaflight 的 Mahony）：課程與 PX4 用 Kalman，見上文
+- 俯視地圖、CSV 匯出：與定位無關
 - 螺旋槳陀螺效應、氣動阻尼、地面效應（機體本身的陀螺耦合項已在第 2 批加入）
 - Mixer 去飽和（airmode）
 - 飛控鎖（起飛前自檢）、安全開關
 - 航點任務 → 第 5 批
-- 搖桿輸入 → 第 3 批
