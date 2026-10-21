@@ -1,0 +1,1081 @@
+<!doctype html>
+<!--
+  手勢飛行 Gesture Flight（攝影機 AI 手勢版）
+  衍生自「四旋翼控制實驗台 Quadcopter Control Lab」
+  Copyright (c) 2026 AdevLog — https://github.com/AdevLog
+  原始版本：https://adevlog.github.io/drone-sim/gesture/
+  MIT License：可自由使用、修改與散布，但必須保留這段版權聲明與授權全文。
+  授權全文：https://github.com/AdevLog/drone-sim/blob/main/LICENSE
+  技術報告：gesture/REPORT.zh-TW.md（English: gesture/REPORT.md）
+
+  飛機：實驗台 SIM-CORE 的 Position 模式（消費級手感）+ 定高 2 m；拿掉感測器誤差、解鎖、墜機、其他飛行模式
+  虛擬球：撥動 Δω = GAIN · (r × Δp)；球的角速度 → 搖桿：前後滾 = 前進、左右滾 = 側移、自轉 = 航向角速度；球停 = 煞車並鎖定位置
+
+  攝影機手勢：
+  - 模型：MediaPipe Gesture Recognizer（float16），瀏覽器內 WebAssembly 執行，影像不上傳
+    手掌偵測（BlazePalm）→ 21 個關鍵點（含 3D 公制世界座標）→ 手勢分類（只用到「握拳」）
+  - 座標：鏡頭座標 → 你的座標 = 繞垂直軸 180° 的純旋轉（右手轉完還是右手）。只翻 X 是反射，會變成鏡子裡的左手
+  - 鏡像判斷：手性三重積 χ（旋轉不變號、反射變號），不用 MediaPipe 的 Right/Left 標籤（實測慣例與文件相反）
+  - 映射：以手的實際大小當尺（2D↔3D 最小平方比例尺），鏡頭中央 = 球心，虛擬手遠近一樣大
+  - 撥球：5 根指尖像 5 個滑鼠游標推球面；手的移動拆成平移 t 與繞手腕扭轉 phi；錨點法抗抖動
+  - 轉向：手掌面向螢幕（法向量與 Z 夾角 < 30°，> 40° 才退出）且扭轉弧長 ≥ 2 × 平移（主導動作鎖定）
+  - 多人干擾：掌長 < 畫面高度 12% 忽略；R1（numHands 1）平常用，追到小手時改用 R2（numHands 2）挑最大的手
+  - 手（掌心）在球的色塊內才操作；色塊外球靠慣性轉（攝影機模式球無阻力）；握拳 = 球停
+  - 攝影機需要 https 或 localhost（GitHub Pages 可；直接開本機檔案在手機上會被拒絕）
+-->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="author" content="AdevLog">
+<title>手勢飛行 Gesture Flight</title>
+<style>
+:root {
+  --ink: #12202a; --muted: #586a77; --line: #c9d3da;
+  --panel: rgba(247, 249, 250, 0.86);
+  --cmd: #e8178c; --act: #00a88f;
+  --bs: min(40vmin, 260px);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #d7e0e6; color: var(--ink);
+  font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif; }
+#app { position: fixed; inset: 0; }
+#app canvas.gl { display: block; width: 100%; height: 100%; }
+.mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.tl { position: absolute; left: 12px; top: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; pointer-events: none; }
+.hud { display: grid; grid-template-columns: auto auto; gap: 0 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; line-height: 1.55; pointer-events: none; }
+.hud .k { color: var(--muted); font-family: inherit; }
+.tools { position: absolute; right: 12px; top: 12px; display: flex; gap: 8px; }
+.btn { font: inherit; font-size: 14px; padding: 6px 14px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 6px; cursor: pointer; }
+.btn:hover { border-color: var(--muted); }
+.btn:focus-visible { outline: 2px solid var(--cmd); outline-offset: 1px; }
+.ball-wrap { position: absolute; right: 12px; bottom: 12px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px; border-radius: 14px; background: rgba(255, 255, 255, 0.32); border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 2px 10px rgba(18, 32, 42, 0.08); }   /* 淺色塊 = 攝影機手勢的操作區 */
+#ball { width: var(--bs); height: var(--bs); touch-action: none; cursor: grab; display: block; }
+#ball.grab { cursor: grabbing; }
+.ball-cmd { font-size: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; white-space: nowrap; }
+.hint { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - var(--bs) - 48px); font-size: 12px; line-height: 1.5; color: var(--muted);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; pointer-events: none; }
+.hint a { color: inherit; text-decoration: underline; text-underline-offset: 2px; pointer-events: auto; }
+@media (max-width: 520px) { .hint { display: none; } }
+/* 攝影機手勢 */
+#cam { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+#handLayer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.plane { display: flex; flex-direction: column; gap: 4px;
+  padding: 8px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); pointer-events: none; }
+.plane[hidden] { display: none; }
+#planeView { width: var(--ps); height: var(--ps); display: block; }
+.plane .t { font-size: 12px; color: var(--muted); max-width: var(--ps); line-height: 1.4; }
+.signs { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); pointer-events: auto; }
+.btn.sm { font-size: 12px; padding: 2px 8px; }
+:root { --ps: min(30vmin, 190px); }
+.btn.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.calib { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 16px; font-size: 16px; pointer-events: none; text-align: center; }
+.calib[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="tools">
+    <button class="btn" id="btnCam" type="button" title="開啟前鏡頭，用手勢轉球">📷 手勢</button>
+    <button class="btn" id="btnRefly" type="button" title="快捷鍵 R">重飛</button>
+    <button class="btn" id="btnFull" type="button" title="快捷鍵 F">全螢幕</button>
+  </div>
+  <div class="hint" id="hint">撥球心：前後、左右飛 · 沿球的邊緣撥：轉向 · 按住球不動或按空白鍵：煞車 · 雙擊球：立刻停 · 📷 手勢：手放在鏡頭正前方 = 手在球上，用指尖撥球；手掌立起面向螢幕扭轉 = 轉向；握拳 = 停；手往旁邊移出色塊 = 球靠慣性轉 · R 重飛 · F 全螢幕<br>© 2026 <a href="https://github.com/AdevLog" target="_blank" rel="noopener">AdevLog</a> · <a href="https://github.com/AdevLog/drone-sim/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a> · <a href="../">四旋翼控制實驗台</a> · <a href="https://github.com/AdevLog/drone-sim/blob/main/gesture/REPORT.zh-TW.md" target="_blank" rel="noopener">技術報告</a></div>
+  <div class="tl">
+  <div class="hud mono" id="hud"></div>
+  <div class="plane" id="planePanel" hidden>
+    <div class="t" id="planeTitle">5 指平面</div>
+    <div class="signs" id="signs"><span>反轉</span><button class="btn sm" type="button" data-k="0">前後</button><button class="btn sm" type="button" data-k="1">左右</button><button class="btn sm" type="button" data-k="2">轉向</button></div>
+    <canvas id="planeView" aria-label="5 指平面即時估計"></canvas>
+  </div>
+  </div>
+  <div class="calib" id="calib" hidden></div>
+  <video id="cam" playsinline muted></video>
+  <div class="ball-wrap" id="ballZone">
+    <canvas id="ball" aria-label="虛擬球：拖曳撥動來控制飛機"></canvas>
+    <div class="ball-cmd mono" id="ballCmd"></div>
+  </div>
+  <canvas id="handLayer"></canvas>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// === CORE-BEGIN ===
+// 純計算，不碰 DOM（可在 node 單獨測試）。座標：導航 NED（北、東、下），機體 FRD（前、右、下）。
+const DEG = Math.PI / 180;
+const PHYS = {
+  g: 9.81, m: 1.5, arm: 0.25,
+  Ix: 0.029, Iy: 0.029, Iz: 0.055,
+  kT: 9e-6, cQ: 0.05,
+  wMax: 1000, tau: 0.03, Tmin: 0.1, drag: 0.25,
+};
+PHYS.d = PHYS.arm / Math.SQRT2;
+PHYS.Tmax = PHYS.kT * PHYS.wMax * PHYS.wMax;
+PHYS.wHover = Math.sqrt(PHYS.m * PHYS.g / 4 / PHYS.kT);
+const TAU_SCALE = [2 * PHYS.d * PHYS.Tmax, 2 * PHYS.d * PHYS.Tmax, 2 * PHYS.cQ * PHYS.Tmax];
+// PX4 Quad X 編號；s = +1 逆時針
+const MOTORS = [
+  { x: 1, y: 1, s: 1 },    // M1 右前
+  { x: -1, y: -1, s: 1 },  // M2 左後
+  { x: 1, y: -1, s: -1 },  // M3 左前
+  { x: -1, y: 1, s: -1 },  // M4 右後
+];
+// 控制參數：實驗台「消費級」手感，平順好飛，本專案不調參
+const PRM = {
+  roll: { P: 5, RP: 0.12, RI: 0.15, RD: 0.003 },
+  pitch: { P: 5, RP: 0.12, RI: 0.15, RD: 0.003 },
+  yaw: { P: 2.0, RP: 0.2, RI: 0.1, RD: 0 },
+  pos: { VP: 2.2, VI: 0.4, VD: 0.2, XY_P: 0.8 },
+  thr: { P: 1.0, VP: 3.0, VI: 1.5, VD: 0 },
+};
+const RATE_MAX = [220 * DEG, 220 * DEG, 200 * DEG];
+const FLY = {
+  alt: 2,                 // 起始與鎖定高度 m
+  velMax: 3,              // 搖桿全推的水平速度 m/s
+  yawRate: 90 * DEG,      // 搖桿全推的航向角速度
+  accHor: 4,              // 速度命令變化率上限 m/s²（起步、煞車平順）
+  tiltMax: 35 * DEG,      // 位置控制可用的最大傾斜
+  dz: 0.04,               // 搖桿死區
+  vzUp: 3, vzDn: 1.5,
+};
+const DT = 0.001, CTRL_EVERY = 4, DCUT_HZ = 30;   // 物理 1 kHz、控制 250 Hz
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const wrapPi = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+function quatToC(q) {
+  const [w, x, y, z] = q;
+  return [
+    [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+    [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+    [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+  ];
+}
+const cToEuler = (C) => [Math.atan2(C[2][1], C[2][2]), -Math.asin(clamp(C[2][0], -1, 1)), Math.atan2(C[1][0], C[0][0])];
+// ω（固定座標）作用在姿態四元數上：q̇ = ½ (0, ω) ⊗ q
+function quatSpinFixed(q, w, dt) {
+  const [qw, qx, qy, qz] = q, [ax, ay, az] = w, h = 0.5 * dt;
+  const n = [
+    qw - h * (ax * qx + ay * qy + az * qz),
+    qx + h * (ax * qw + ay * qz - az * qy),
+    qy + h * (ay * qw + az * qx - ax * qz),
+    qz + h * (az * qw + ax * qy - ay * qx),
+  ];
+  const m = Math.hypot(...n);
+  return n.map((v) => v / m);
+}
+
+// ---------- 飛機：Position 模式 + 定高 ----------
+function createSim() {
+  const S = {};
+  S.reset = function () {
+    S.t = 0; S.k = 0;
+    S.pos = [0, 0, -FLY.alt]; S.vel = [0, 0, 0];
+    S.q = [1, 0, 0, 0]; S.C = quatToC(S.q); S.eul = [0, 0, 0]; S.w = [0, 0, 0];
+    S.Om = [0, 0, 0, 0].map(() => PHYS.wHover); S.wCmd = S.Om.slice();
+    S.T = S.Om.map((o) => PHYS.kT * o * o); S.sat = [false, false, false, false];
+    S.ch = [0, 1, 2, 3].map(() => ({ integ: 0, prev: 0, dFilt: 0 }));
+    S.tau = [0, 0, 0]; S.F = PHYS.m * PHYS.g;
+    S.yawSp = 0; S.altLock = FLY.alt;
+    S.pc = { integ: [0, 0], prev: [0, 0], dFilt: [0, 0], vsp: [0, 0], psp: [0, 0], mode: 'hold' };
+    S.sticks = { roll: 0, pitch: 0, yaw: 0 };   // −1 ~ +1：pitch + = 前進、roll + = 右移、yaw + = 右轉
+  };
+  const dzf = (v) => (Math.abs(v) < FLY.dz ? 0 : (v - Math.sign(v) * FLY.dz) / (1 - FLY.dz));
+
+  // 姿態串級：角度誤差 × P → 角速度命令 → 角速度 PID → 力矩
+  function attCtrl(k, name, r, dtc, alpha) {
+    const c = S.ch[k], P = PRM[name];
+    const rateCmd = clamp(P.P * wrapPi(r - S.eul[k]), -RATE_MAX[k], RATE_MAX[k]);
+    const rate = S.w[k], e = rateCmd - rate;
+    const dm = (rate - c.prev) / dtc; c.prev = rate; c.dFilt += alpha * (dm - c.dFilt);   // D 作用在量測值
+    c.integ = clamp(c.integ + P.RI * e * dtc, -0.3, 0.3);
+    const u = clamp(P.RP * e + c.integ - P.RD * c.dFilt, -1, 1);
+    S.tau[k] = u * TAU_SCALE[k];
+  }
+  // 定高：高度誤差 × P → 垂直速度命令 → 速度 PID → 垂直加速度命令
+  function altCtrl(dtc, alpha) {
+    const c = S.ch[3], P = PRM.thr, h = -S.pos[2], vz = -S.vel[2];
+    const vzCmd = clamp(P.P * (S.altLock - h), -FLY.vzDn, FLY.vzUp);
+    const e = vzCmd - vz;
+    const acc = (vz - c.prev) / dtc; c.prev = vz; c.dFilt += alpha * (acc - c.dFilt);
+    c.integ = clamp(c.integ + P.VI * e * dtc, -15, 15);
+    return P.VP * e + c.integ - P.VD * c.dFilt;
+  }
+  function control(dtc) {
+    const alpha = dtc / (dtc + 1 / (2 * Math.PI * DCUT_HZ));
+    const sr = dzf(S.sticks.roll), sp = dzf(S.sticks.pitch), sy = dzf(S.sticks.yaw);
+    S.yawSp = wrapPi(S.yawSp + sy * FLY.yawRate * dtc);
+    const aUp = altCtrl(dtc, alpha);
+    // 水平：搖桿 → 速度命令（機頭座標）；放開 → 煞車，速度夠小後鎖定位置
+    const pc = S.pc, P = PRM.pos, psi = S.eul[2], c = Math.cos(psi), s = Math.sin(psi);
+    const v = [S.vel[0], S.vel[1]];
+    let tgt;
+    if (sr !== 0 || sp !== 0) {
+      tgt = [(sp * c - sr * s) * FLY.velMax, (sp * s + sr * c) * FLY.velMax];
+      pc.psp = null; pc.mode = 'cruise';
+    } else if (pc.psp === null) {
+      tgt = [0, 0]; pc.mode = 'brake';
+      if (Math.hypot(v[0], v[1]) < 0.3 && Math.hypot(pc.vsp[0], pc.vsp[1]) < 0.3) pc.psp = [S.pos[0], S.pos[1]];
+    } else {
+      tgt = [P.XY_P * (pc.psp[0] - S.pos[0]), P.XY_P * (pc.psp[1] - S.pos[1])];
+      const n = Math.hypot(tgt[0], tgt[1]); if (n > FLY.velMax) tgt = tgt.map((x) => x * FLY.velMax / n);
+      pc.mode = 'hold';
+    }
+    const dvx = tgt[0] - pc.vsp[0], dvy = tgt[1] - pc.vsp[1], dvn = Math.hypot(dvx, dvy), step = FLY.accHor * dtc;
+    pc.vsp = dvn > step ? [pc.vsp[0] + dvx * step / dvn, pc.vsp[1] + dvy * step / dvn] : tgt;
+    const acc = [0, 0];
+    for (let i = 0; i < 2; i++) {
+      const e = pc.vsp[i] - v[i];
+      const dv = (v[i] - pc.prev[i]) / dtc; pc.prev[i] = v[i]; pc.dFilt[i] += alpha * (dv - pc.dFilt[i]);
+      pc.integ[i] = clamp(pc.integ[i] + P.VI * e * dtc, -5, 5);
+      acc[i] = P.VP * e + pc.integ[i] - P.VD * pc.dFilt[i];
+    }
+    // 加速度 → 傾斜角：推力向量同時提供水平加速度與 g + a_up
+    const up = Math.max(0.1 * PHYS.g, PHYS.g + aUp);
+    let aF = acc[0] * c + acc[1] * s, aR = -acc[0] * s + acc[1] * c;
+    const aMax = up * Math.tan(FLY.tiltMax), aH = Math.hypot(aF, aR);
+    if (aH > aMax) { aF *= aMax / aH; aR *= aMax / aH; }
+    const pitchSp = -Math.atan2(aF, up), rollSp = Math.atan2(aR * Math.cos(pitchSp), up);
+    attCtrl(0, 'roll', rollSp, dtc, alpha);
+    attCtrl(1, 'pitch', pitchSp, dtc, alpha);
+    attCtrl(2, 'yaw', S.yawSp, dtc, alpha);
+    S.F = clamp(PHYS.m * Math.hypot(aF, aR, up), 0, 4 * PHYS.Tmax);
+    mix();
+  }
+  // Mixer：總推力 + 三軸力矩 → 四顆推力 → 轉速命令
+  function mix() {
+    const [L, M, N] = S.tau, F = S.F, d = PHYS.d;
+    MOTORS.forEach((m, i) => {
+      let T = F / 4 - m.y * L / (4 * d) + m.x * M / (4 * d) + m.s * N / (4 * PHYS.cQ);
+      S.sat[i] = T < PHYS.Tmin || T > PHYS.Tmax;
+      T = clamp(T, PHYS.Tmin, PHYS.Tmax);
+      S.wCmd[i] = Math.sqrt(T / PHYS.kT);
+    });
+  }
+  // 馬達一階延遲 + 6 自由度剛體
+  function physics(dt) {
+    let F = 0, L = 0, M = 0, N = 0;
+    MOTORS.forEach((m, i) => {
+      S.Om[i] += (S.wCmd[i] - S.Om[i]) * dt / PHYS.tau;
+      const T = PHYS.kT * S.Om[i] * S.Om[i];
+      S.T[i] = T; F += T;
+      L += -m.y * PHYS.d * T; M += m.x * PHYS.d * T; N += m.s * PHYS.cQ * T;
+    });
+    const [p, q, r] = S.w;
+    S.w = [
+      p + ((PHYS.Iy - PHYS.Iz) * q * r + L) / PHYS.Ix * dt,
+      q + ((PHYS.Iz - PHYS.Ix) * p * r + M) / PHYS.Iy * dt,
+      r + ((PHYS.Ix - PHYS.Iy) * p * q + N) / PHYS.Iz * dt,
+    ];
+    // 機體角速度：q̇ = ½ q ⊗ (0, ω)
+    const [qw, qx, qy, qz] = S.q, [wx, wy, wz] = S.w, h = 0.5 * dt;
+    const nq = [
+      qw + h * (-qx * wx - qy * wy - qz * wz),
+      qx + h * (qw * wx + qy * wz - qz * wy),
+      qy + h * (qw * wy - qx * wz + qz * wx),
+      qz + h * (qw * wz + qx * wy - qy * wx),
+    ];
+    const nn = Math.hypot(...nq); S.q = nq.map((x) => x / nn);
+    S.C = quatToC(S.q); S.eul = cToEuler(S.C);
+    const m = PHYS.m, C = S.C;
+    const acc = [
+      (C[0][2] * -F) / m - PHYS.drag * S.vel[0],
+      (C[1][2] * -F) / m - PHYS.drag * S.vel[1],
+      PHYS.g + (C[2][2] * -F) / m - PHYS.drag * S.vel[2],
+    ];
+    for (let i = 0; i < 3; i++) { S.vel[i] += acc[i] * dt; S.pos[i] += S.vel[i] * dt; }
+    if (S.pos[2] > 0) { S.pos[2] = 0; S.vel[2] = Math.min(0, S.vel[2]); }   // 地面
+  }
+  S.step = function () {
+    if (S.k % CTRL_EVERY === 0) control(DT * CTRL_EVERY);
+    physics(DT);
+    S.k++; S.t += DT;
+  };
+  S.reset();
+  return S;
+}
+
+// ---------- 虛擬球 ----------
+// 球固定在原地、只能轉。俯視：螢幕 x = 右、y = 上（= 機頭方向）、z = 朝向觀看者（= 世界的上方）。
+// 撥動：在接觸點 r（單位球面）施加位移 Δp，角速度增量 Δω = GAIN · (r × Δp)。
+//   撥球心 → r ≈ (0, 0, 1) → 只產生 x、y 分量（前後、左右滾）
+//   沿邊緣切線撥 → r 在赤道上（z = 0）→ 只產生 z 分量（自轉）
+const BALL = {
+  GAIN: 1.3,         // 撥過一個直徑（位移 2 個半徑）→ 角速度 2.6 rad/s ≈ 搖桿 65%（試飛後由 1.0 調高，球更好撥）
+  W_XY: 4,           // 水平滾動角速度上限 rad/s（= 搖桿推滿）
+  W_Z: 2,            // 自轉角速度上限 rad/s（= yaw 搖桿推滿）
+  FRIC_XY: 0.01,     // 水平滾動摩擦 1/s：幾乎不減速 → 持續巡航（60 秒約剩 55%）
+  FRIC_Z: 1.5,       // 自轉摩擦 1/s：約 1~2 秒停下
+  BRAKE: 5,          // 煞車時的衰減率 1/s
+};
+function createBall() {
+  const B = {};
+  B.reset = () => { B.w = [0, 0, 0]; B.q = [1, 0, 0, 0]; };
+  // xn, yn：接觸點（以半徑為單位，右、上為正）；dx, dy：位移（以半徑為單位）
+  B.push = (xn, yn, dx, dy) => {
+    const rho = Math.hypot(xn, yn);
+    const r = rho < 1 ? [xn, yn, Math.sqrt(1 - rho * rho)] : [xn / rho, yn / rho, 0];
+    // r × (dx, dy, 0)
+    B.w[0] += BALL.GAIN * (-r[2] * dy);
+    B.w[1] += BALL.GAIN * (r[2] * dx);
+    B.w[2] += BALL.GAIN * (r[0] * dy - r[1] * dx);
+    const n = Math.hypot(B.w[0], B.w[1]);
+    if (n > BALL.W_XY) { B.w[0] *= BALL.W_XY / n; B.w[1] *= BALL.W_XY / n; }
+    B.w[2] = clamp(B.w[2], -BALL.W_Z, BALL.W_Z);
+  };
+  B.stop = () => { B.w = [0, 0, 0]; };
+  // 攝影機手勢：手轉 Δθ（rad 向量）→ 球的角速度增加 gain · Δθ（上限同滑鼠撥球）
+  // 接觸點 (xn, yn)、位移 (dx, dy)（球半徑單位，右、上為正）→ 角速度增量（和 push 同一條公式，但不直接加上去）
+  B.contactDelta = (xn, yn, dx, dy) => {
+    const rho = Math.hypot(xn, yn);
+    const r = rho < 1 ? [xn, yn, Math.sqrt(1 - rho * rho)] : [xn / rho, yn / rho, 0];
+    return [BALL.GAIN * (-r[2] * dy), BALL.GAIN * (r[2] * dx), BALL.GAIN * (r[0] * dy - r[1] * dx)];
+  };
+  B.addRotation = (dth, gain) => {
+    B.w = B.w.map((x, i) => x + gain * dth[i]);
+    const n = Math.hypot(B.w[0], B.w[1]);
+    if (n > BALL.W_XY) { B.w[0] *= BALL.W_XY / n; B.w[1] *= BALL.W_XY / n; }
+    B.w[2] = clamp(B.w[2], -BALL.W_Z, BALL.W_Z);
+  };
+  B.noFric = false;   // 攝影機手勢開啟時 = true：球沒有阻力，靠慣性一直轉，握拳才停
+  B.step = (dt, braking, touching) => {
+    if (braking) {
+      const f = Math.exp(-BALL.BRAKE * dt); B.w = B.w.map((x) => x * f);
+    } else if (!B.noFric) {
+      const fxy = Math.exp(-BALL.FRIC_XY * dt), fz = Math.exp(-BALL.FRIC_Z * dt);
+      B.w = [B.w[0] * fxy, B.w[1] * fxy, B.w[2] * fz];
+    }
+    // 小於死區的轉動直接歸零，避免球在轉、飛機卻不動（撥動中不歸零，讓小幅撥動可以累積）
+    if (!touching) {
+      if (Math.hypot(B.w[0], B.w[1]) < BALL.W_XY * FLY.dz) { B.w[0] = 0; B.w[1] = 0; }
+      if (Math.abs(B.w[2]) < BALL.W_Z * FLY.dz) B.w[2] = 0;
+    }
+    B.q = quatSpinFixed(B.q, B.w, dt);
+  };
+  // 球的角速度 → 搖桿值：往前滾（繞 x 軸負向）= 前進；往右滾（繞 y 軸正向）= 右移；俯視順時針自轉（z 負向）= 右轉
+  B.sticks = () => ({
+    pitch: clamp(-B.w[0] / BALL.W_XY, -1, 1),
+    roll: clamp(B.w[1] / BALL.W_XY, -1, 1),
+    yaw: clamp(-B.w[2] / BALL.W_Z, -1, 1),
+  });
+  B.reset();
+  return B;
+}
+// ---------- 手的轉動估計（攝影機手勢）----------
+// 座標 W（和球的座標相同）：X = 使用者的右、Y = 上、Z = 朝向使用者（螢幕往外）。
+// 5 個指尖（拇指 → 食指 → 中指 → 無名指 → 小指）當成剛體：
+//   相鄰兩幀 a → b，小角度旋轉 Δθ 滿足  b_i − a_i ≈ Δθ × a_i（皆已減去質心，移動不算轉動）
+//   最小平方解：J · Δθ = Σ a_i × d_i，J = Σ (|a_i|² I − a_i a_iᵀ)
+//   J 就是這 5 點的「轉動慣量張量」、右邊就是「角動量」，所以 Δθ = J⁻¹ · L
+// 平面法向量用 Newell 法，依拇指 → 小指的順序：繞 n 依拇指 → 小指方向轉 = 正轉（右手定則）
+const HAND = {
+  TIPS: [4, 8, 12, 16, 20],   // MediaPipe 指尖編號：拇指、食指、中指、無名指、小指
+  GAIN: 2.0,                  // 手轉 1 rad → 球的角速度增加 2 rad/s（和滑鼠撥球同一個增益）
+  STEP: 6 * DEG,              // 錨點法：手相對「錨點姿態」轉超過這個角度才算一次，算完錨點移到目前姿態
+                              //   關鍵點抖動只會在錨點附近晃，不會累積；真正的轉動以 6° 為一格累加
+  GLITCH: 35 * DEG,           // 相對錨點一次跳超過這個角度 = 追蹤跳動，丟掉並重設錨點
+  EMA: 0.5,                   // 關鍵點低通濾波（0~1，越小越平滑、越延遲）
+  FIST: 0.6,                  // 握拳信心分數門檻
+  SETTLE: 6,                  // 剛進入色塊、張開握拳、追蹤跳動之後，先等這麼多幀（手形還在變、濾波還在追）才開始算轉動
+  VIEW_AZ: 25 * DEG,          // 3D 虛擬手的觀看角度：從你的手後方偏右 25°、偏上 15° 看（像照片那樣，看得出深度）
+  VIEW_EL: 15 * DEG,
+  CONTACT: [-1, -1, 1],       // 保留未使用：舊版「用手的 3D 轉動驅動球」的接觸關係。實測等於讓鏡子裡的人撥球（Z 被反射），改用指尖接觸
+  STROKE_STEP: 0.06,          // 手平移超過 0.06 個球半徑、或扭轉超過 TWIST_STEP，才推一次球（濾掉 2D 抖動），推完錨點移到目前位置
+  TWIST_STEP: 5 * DEG,
+  STROKE_GLITCH: 0.9,         // 一次跳超過 0.9 個球半徑（或扭轉超過 45°）= 追蹤跳動，丟掉
+  PALM_M: 0.09,               // 手腕 → 中指根的實際長度約 9 cm：虛擬手的尺
+  PALM_R: 0.9,                // 虛擬手的手腕 → 中指根 = 0.9 個球半徑（遠近都一樣大）
+  SCALE_EMA: 0.15,            // 鏡頭比例尺（像素 / 公尺）的低通：比例尺抖動會被當成平移，所以要平滑
+  YAW_IN: 30 * DEG,           // 手掌法向量和 Z（朝向你）夾角 < 30° = 手掌面向螢幕，扭轉才算轉向
+  YAW_OUT: 40 * DEG,          // 夾角 > 40° 才退出（遲滯，避免邊界來回跳）
+  DOM: 2,                     // 主導動作鎖定：扭轉弧長 ≥ 2 × 平移才算轉向（這次不平移），否則只算平移（扭轉丟掉）
+  MIN_R: 0.12,                // 掌長（手腕 → 中指根，約 9 cm）至少佔畫面高度 12% 才算數
+                              //   針孔模型：距離 Z = 掌長 / (2 · MIN_R · tan(垂直視角/2))；一般筆電鏡頭約 87 cm 以內
+                              //   也是抖動上限：手越小，1 像素雜訊放大到螢幕越多。要靠太近才能操作就調低
+  SWITCH_K: 1.3,              // 黏著：別的手要比目前這隻大 1.3 倍才換過去
+  BACK_S: 0.5,                // 模式 2 → 1：只剩 1 隻夠大的手、連續 0.5 秒
+  CHI_MIN: 0.15,              // 手性 χ 的可信門檻：|χ| 小於這個（拇指貼在掌面上）就不拿來判斷鏡像
+  SIGN: [1, 1, 1],            // 實測修正：前後、左右、轉向各自的正負號（畫面上的「反轉」按鈕）
+};
+const vsub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const vcross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const vdot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const centroid = (P) => { const c = [0, 0, 0]; P.forEach((p) => { c[0] += p[0]; c[1] += p[1]; c[2] += p[2]; }); return c.map((v) => v / P.length); };
+function solve3(A, b) {
+  const [[a, b1, c], [d, e, f], [g, h, i]] = A;
+  const det = a * (e * i - f * h) - b1 * (d * i - f * g) + c * (d * h - e * g);
+  if (Math.abs(det) < 1e-18) return [0, 0, 0];
+  const inv = [
+    [(e * i - f * h), -(b1 * i - c * h), (b1 * f - c * e)],
+    [-(d * i - f * g), (a * i - c * g), -(a * f - c * d)],
+    [(d * h - e * g), -(a * h - b1 * g), (a * e - b1 * d)],
+  ];
+  return inv.map((r) => (r[0] * b[0] + r[1] * b[1] + r[2] * b[2]) / det);
+}
+// a、b：同順序的 3D 點（W 座標）；回傳 a → b 的旋轉向量 Δθ（rad，方向 = 轉軸）
+function handRotation(a, b) {
+  const ca = centroid(a), cb = centroid(b);
+  const J = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], L = [0, 0, 0];
+  for (let k = 0; k < a.length; k++) {
+    const p = vsub(a[k], ca), d = vsub(vsub(b[k], cb), p), r2 = vdot(p, p);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) J[i][j] += (i === j ? r2 : 0) - p[i] * p[j];
+    const m = vcross(p, d); L[0] += m[0]; L[1] += m[1]; L[2] += m[2];
+  }
+  const eps = 1e-3 * (J[0][0] + J[1][1] + J[2][2]) / 3;   // 指尖幾乎排成一直線時避免除以 0
+  for (let i = 0; i < 3; i++) J[i][i] += eps;
+  return solve3(J, L);
+}
+// 抓握追蹤：濾波 + 錨點法。update() 每幀呼叫，回傳這一幀要加到球上的 Δθ（沒有就回傳 null）
+function createGripTracker() {
+  const G = { sm: null, anchor: null, live: [0, 0, 0], n: [0, 0, 1], settle: 0 };
+  const copy = (P) => P.map((p) => p.slice());
+  G.reset = () => { G.sm = null; G.anchor = null; G.live = [0, 0, 0]; };
+  // pts：5 個指尖（W 座標，公尺），沒偵測到手傳 null；active：手在操作區內且不是握拳
+  G.update = (pts, active) => {
+    if (!pts) { G.reset(); return null; }
+    G.sm = G.sm ? G.sm.map((p, k) => p.map((v, i) => v + HAND.EMA * (pts[k][i] - v))) : copy(pts);
+    G.n = fingerNormal(G.sm);
+    if (!active) { G.anchor = null; G.live = [0, 0, 0]; return null; }
+    if (!G.anchor) { G.anchor = copy(G.sm); G.live = [0, 0, 0]; G.settle = HAND.SETTLE; return null; }   // 剛進入：只記錄起始姿態
+    if (G.settle > 0) { G.settle--; G.anchor = copy(G.sm); G.live = [0, 0, 0]; return null; }            // 穩定期：錨點一直跟著，不算轉動
+    const r = handRotation(G.anchor, G.sm), m = Math.hypot(...r);
+    G.live = r;
+    if (m > HAND.GLITCH) { G.anchor = copy(G.sm); G.live = [0, 0, 0]; G.settle = HAND.SETTLE; return null; }
+    if (m >= HAND.STEP) { G.anchor = copy(G.sm); G.live = [0, 0, 0]; return r; }
+    return null;
+  };
+  return G;
+}
+// 指尖撥球追蹤（2D，畫面像素，y 朝下）：濾波 + 錨點法
+// 5 根指尖相對錨點的移動拆成兩部分（2D，轉軸在手腕）：
+//   phi = 指尖相對手腕的向量轉了多少（rad，y 朝上看逆時針為正）→ 當作沿球的邊緣撥（轉向）
+//   t = 指尖質心的移動扣掉「繞手腕轉 phi 造成的移動」（像素）→ 當作在球心撥（前後、左右）
+//   真實的手扭轉時轉軸在手腕，指尖質心會畫弧；只用質心會把扭轉誤當成平移（左右串軸）
+// 回傳 { t, phi, rad }（rad = 指尖到手腕的平均距離，弧長 = phi × rad），沒有就回傳 null
+function createStrokeTracker() {
+  const T = { sm: null, anchor: null, piv: null, pivA: null, settle: 0, prog: 0 };
+  const copy = (P) => P.map((p) => p.slice());
+  T.reset = () => { T.sm = null; T.anchor = null; T.prog = 0; };
+  // pts：5 個指尖、pivot：手腕（畫面像素）
+  T.update = (pts, active, R, pivot) => {
+    if (!pts) { T.reset(); return null; }
+    T.sm = T.sm ? T.sm.map((p, k) => [p[0] + HAND.EMA * (pts[k][0] - p[0]), p[1] + HAND.EMA * (pts[k][1] - p[1])]) : copy(pts);
+    T.piv = T.piv ? [T.piv[0] + HAND.EMA * (pivot[0] - T.piv[0]), T.piv[1] + HAND.EMA * (pivot[1] - T.piv[1])] : pivot.slice();
+    if (!active) { T.anchor = null; T.prog = 0; return null; }
+    const setAnchor = () => { T.anchor = copy(T.sm); T.pivA = T.piv.slice(); };
+    if (!T.anchor) { setAnchor(); T.settle = HAND.SETTLE; return null; }
+    if (T.settle > 0) { T.settle--; setAnchor(); return null; }
+    const cen = (P) => [P.reduce((a, p) => a + p[0], 0) / P.length, P.reduce((a, p) => a + p[1], 0) / P.length];
+    const ca = cen(T.anchor), cb = cen(T.sm), pa = T.pivA, pb = T.piv;
+    let sx = 0, sc = 0;
+    for (let k = 0; k < T.sm.length; k++) {   // 指尖相對手腕的向量，y 朝上的座標下求 2D 旋轉角
+      const ax = T.anchor[k][0] - pa[0], ay = -(T.anchor[k][1] - pa[1]), bx = T.sm[k][0] - pb[0], by = -(T.sm[k][1] - pb[1]);
+      sx += ax * by - ay * bx; sc += ax * bx + ay * by;
+    }
+    const phi = Math.atan2(sx, sc), c = Math.cos(phi), sn = Math.sin(phi);
+    // 質心若只是繞（錨點時的）手腕轉 phi 會到哪裡；剩下的才是平移（手腕本身移動也算平移）。畫面 y 朝下，所以 y 先反號再轉
+    const rx = ca[0] - pa[0], ry = -(ca[1] - pa[1]);
+    const pred = [pa[0] + rx * c - ry * sn, pa[1] - (rx * sn + ry * c)];
+    const t = [cb[0] - pred[0], cb[1] - pred[1]], tn = Math.hypot(t[0], t[1]);
+    // 扭轉要同時滿足角度與弧長：指尖靠得很近時，角度容易被雜訊騙過，所以弧長（角度 × 指尖到質心的平均距離）也要夠長
+    const rad = T.sm.reduce((a, p) => a + Math.hypot(p[0] - pb[0], p[1] - pb[1]), 0) / T.sm.length;
+    const twistProg = Math.min(Math.abs(phi) / HAND.TWIST_STEP, Math.abs(phi) * rad / (0.5 * HAND.STROKE_STEP * R));
+    T.prog = Math.max(tn / (HAND.STROKE_STEP * R), twistProg);
+    if (tn > HAND.STROKE_GLITCH * R || Math.abs(phi) > 45 * DEG) { setAnchor(); T.settle = HAND.SETTLE; T.prog = 0; return null; }
+    if (T.prog < 1) return null;
+    setAnchor(); T.prog = 0;
+    return { t, phi, rad };
+  };
+  return T;
+}
+// 依拇指 → 小指順序的平面法向量（Newell 法，單位向量）
+function fingerNormal(P) {
+  const c = centroid(P), n = [0, 0, 0];
+  for (let k = 0; k < P.length; k++) { const m = vcross(vsub(P[k], c), vsub(P[(k + 1) % P.length], c)); n[0] += m[0]; n[1] += m[1]; n[2] += m[2]; }
+  const l = Math.hypot(...n); return l > 1e-12 ? n.map((v) => v / l) : [0, 0, 1];
+}
+// === CORE-END ===
+
+// ================= 畫面 =================
+const $ = (id) => document.getElementById(id);
+const sim = createSim();
+const ball = createBall();
+window.app_debug = { sim, ball };
+
+// ---------- 3D 場景（three.js：x = 東、y = 上、z = 南）----------
+const appEl = $('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.domElement.className = 'gl';
+appEl.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const SKY = 0xd7e0e6;
+scene.background = new THREE.Color(SKY);
+scene.fog = new THREE.Fog(SKY, 40, 140);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.05, 500);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.7); sun.position.set(3, 8, 4); scene.add(sun);
+const toThree = (p) => new THREE.Vector3(p[1], -p[2], -p[0]);   // NED → three
+
+// 地面：1 m 細格線 + 10 m 粗格線
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshLambertMaterial({ color: 0xc8d2d9 }));
+ground.rotation.x = -Math.PI / 2; scene.add(ground);
+const gridFine = new THREE.GridHelper(400, 400, 0xb3c0c9, 0xb3c0c9); gridFine.position.y = 0.002; scene.add(gridFine);
+const gridMain = new THREE.GridHelper(400, 40, 0x8596a2, 0x8596a2); gridMain.position.y = 0.004; scene.add(gridMain);
+
+// 起點：黃圈 + 旗桿 + 旗子
+const startRing = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.0, 48), new THREE.MeshBasicMaterial({ color: 0xf2c200, side: THREE.DoubleSide }));
+startRing.rotation.x = -Math.PI / 2; startRing.position.y = 0.01; scene.add(startRing);
+const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 3.2, 12), new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.5 }));
+pole.position.set(0, 1.6, 0); scene.add(pole);
+const flagShape = new THREE.Shape(); flagShape.moveTo(0, 0); flagShape.lineTo(0.9, -0.25); flagShape.lineTo(0, -0.5); flagShape.lineTo(0, 0);
+const flag = new THREE.Mesh(new THREE.ShapeGeometry(flagShape), new THREE.MeshBasicMaterial({ color: 0xe8178c, side: THREE.DoubleSide }));
+flag.position.set(0.03, 3.2, 0); scene.add(flag);
+// 每 10 m 一根矮的距離標記（±100 m）
+(function markers() {
+  const geo = new THREE.CylinderGeometry(0.06, 0.06, 0.7, 8);
+  const mat = new THREE.MeshLambertMaterial({ color: 0xf07a1a });
+  const pts = [];
+  for (let i = -10; i <= 10; i++) for (let j = -10; j <= 10; j++) if (i || j) pts.push([i * 10, j * 10]);
+  const inst = new THREE.InstancedMesh(geo, mat, pts.length);
+  const m4 = new THREE.Matrix4();
+  pts.forEach(([x, z], k) => { m4.makeTranslation(x, 0.35, z); inst.setMatrixAt(k, m4); });
+  scene.add(inst);
+})();
+
+// 飛機模型（模型座標：前 = −z、右 = +x、上 = +y）
+const Drone = (() => {
+  const g = new THREE.Group(); scene.add(g);
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x2b3a44, roughness: 0.6 });
+  const frontMat = new THREE.MeshStandardMaterial({ color: 0xd04090, roughness: 0.5 });
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.045, 0.16), frameMat));
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.06, 12), frontMat); nose.rotation.x = -Math.PI / 2; nose.position.set(0, 0, -0.11); g.add(nose);
+  const props = [];
+  MOTORS.forEach((m) => {
+    const px = m.y * PHYS.d, pz = -m.x * PHYS.d, len = Math.hypot(px, pz);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.012, len), m.x > 0 ? frontMat : frameMat);
+    arm.position.set(px / 2, 0, pz / 2); arm.rotation.y = Math.atan2(px, pz); g.add(arm);
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.03, 16), frameMat); can.position.set(px, 0.012, pz); g.add(can);
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(0.11, 32), new THREE.MeshBasicMaterial({ color: 0x22aaaa, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }));
+    disc.rotation.x = -Math.PI / 2; disc.position.set(px, 0.03, pz); g.add(disc);
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.004, 0.018), new THREE.MeshStandardMaterial({ color: 0x1b252c })); blade.position.set(px, 0.032, pz); g.add(blade);
+    props.push({ blade, s: m.s, a: 0 });
+  });
+  g.scale.setScalar(1.6);   // 只放大外觀，物理尺寸不變
+  // 姿態：three 旋轉 = P · Cbn · Pᵀ，P 把 (N, E, D) 映到 (E, −D, −N)
+  const P = [[0, 1, 0], [0, 0, -1], [-1, 0, 0]], m4 = new THREE.Matrix4();
+  function sync(dt) {
+    const C = sim.C, R = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) { let s = 0; for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) s += P[i][a] * C[a][b] * P[j][b]; R[i][j] = s; }
+    m4.set(R[0][0], R[0][1], R[0][2], 0, R[1][0], R[1][1], R[1][2], 0, R[2][0], R[2][1], R[2][2], 0, 0, 0, 0, 1);
+    g.quaternion.setFromRotationMatrix(m4);
+    g.position.copy(toThree(sim.pos));
+    props.forEach((p, i) => { p.a += p.s * (sim.Om[i] / PHYS.wMax) * 22 * dt; p.blade.rotation.y = p.a; });
+  }
+  return { sync };
+})();
+
+// 飛行軌跡：10 秒內漸漸淡出
+const Trail = (() => {
+  const N = 2400, FADE = 10;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), tm = new Float32Array(N);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setDrawRange(0, 0);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true })); line.frustumCulled = false; scene.add(line);
+  let n = 0, lastT = -1;
+  const cHot = new THREE.Color(0xe8178c), cBg = new THREE.Color(0xc8d2d9), c = new THREE.Color();
+  function clear() { n = 0; lastT = -1; geo.setDrawRange(0, 0); }
+  function update() {
+    if (sim.t - lastT >= 0.05) {
+      lastT = sim.t;
+      if (n >= N) { pos.copyWithin(0, 3); col.copyWithin(0, 3); tm.copyWithin(0, 1); n = N - 1; }
+      const p = toThree(sim.pos); pos.set([p.x, p.y, p.z], n * 3); tm[n] = sim.t; n++;
+      geo.attributes.position.needsUpdate = true;
+    }
+    let start = 0;
+    while (start < n && sim.t - tm[start] > FADE) start++;
+    for (let i = start; i < n; i++) {
+      c.copy(cHot).lerp(cBg, clamp((sim.t - tm[i]) / FADE, 0, 1));
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+    }
+    geo.attributes.color.needsUpdate = true;
+    geo.setDrawRange(start, n - start);
+  }
+  return { clear, update };
+})();
+
+// 追尾鏡頭：跟在機尾，航向做低通平滑
+const Cam = (() => {
+  const st = { psi: 0, dist: 3.4, el: 17 * DEG };
+  const tgt = new THREE.Vector3();
+  function reset() { st.psi = sim.eul[2]; }
+  function place(dt) {
+    st.psi = wrapPi(st.psi + wrapPi(sim.eul[2] - st.psi) * Math.min(1, dt * 3));
+    const p = toThree(sim.pos), az = -st.psi;
+    tgt.set(p.x, p.y + 0.35, p.z);
+    camera.position.set(tgt.x + st.dist * Math.cos(st.el) * Math.sin(az), tgt.y + st.dist * Math.sin(st.el), tgt.z + st.dist * Math.cos(st.el) * Math.cos(az));
+    camera.lookAt(tgt);
+  }
+  appEl.addEventListener('wheel', (e) => { if (e.target.id === 'ball') return; e.preventDefault(); st.dist = clamp(st.dist * Math.exp(e.deltaY * 0.001), 1.5, 15); }, { passive: false });
+  return { reset, place };
+})();
+
+function resize() {
+  const w = appEl.clientWidth, h = appEl.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / Math.max(h, 1); camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(appEl);
+
+// ---------- 虛擬球：繪製與滑鼠 / 觸控撥動 ----------
+const BallUI = (() => {
+  const cv = $('ball');
+  const ui = { dragging: false, last: null, lastMove: 0, space: false };
+  const HOLD_MS = 250;   // 按住球超過這個時間不動 → 煞車
+  const geom = () => { const W = cv.clientWidth; return { W, cx: W / 2, cy: W / 2, R: W / 2 / 1.3 }; };
+  const local = (e) => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+
+  cv.addEventListener('pointerdown', (e) => {
+    cv.setPointerCapture(e.pointerId);
+    ui.dragging = true; ui.last = local(e); ui.lastMove = performance.now(); cv.classList.add('grab');
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (!ui.dragging) return;
+    const p = local(e), { cx, cy, R } = geom();
+    const dx = (p[0] - ui.last[0]) / R, dy = -(p[1] - ui.last[1]) / R;
+    if (dx === 0 && dy === 0) return;
+    const mx = ((p[0] + ui.last[0]) / 2 - cx) / R, my = -((p[1] + ui.last[1]) / 2 - cy) / R;   // 接觸點取這一段的中點
+    ball.push(mx, my, dx, dy);
+    ui.last = p; ui.lastMove = performance.now();
+  });
+  const up = () => { ui.dragging = false; cv.classList.remove('grab'); };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  cv.addEventListener('dblclick', () => ball.stop());
+  window.addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); ui.space = true; } });
+  window.addEventListener('keyup', (e) => { if (e.code === 'Space') ui.space = false; });
+  window.addEventListener('blur', () => { ui.space = false; up(); });
+
+  const braking = () => ui.space || (ui.dragging && performance.now() - ui.lastMove > HOLD_MS);
+
+  // 球面上的點：經線（過兩極）與緯線；極軸在球的 z（一開始正對觀看者，也就是從正上方看到北極）
+  const LINES = [];
+  for (let k = 0; k < 12; k++) {
+    const lam = k * Math.PI / 6, pts = [];
+    for (let t = -90; t <= 90; t += 6) { const a = t * DEG; pts.push([Math.cos(a) * Math.cos(lam), Math.cos(a) * Math.sin(lam), Math.sin(a)]); }
+    LINES.push({ pts, kind: k === 0 ? 'mark' : 'mer' });
+  }
+  for (const lat of [-60, -30, 0, 30, 60]) {
+    const a = lat * DEG, pts = [];
+    for (let t = 0; t <= 360; t += 6) { const l = t * DEG; pts.push([Math.cos(a) * Math.cos(l), Math.cos(a) * Math.sin(l), Math.sin(a)]); }
+    LINES.push({ pts, kind: lat === 0 ? 'eq' : 'par' });
+  }
+  function draw() {
+    const dpr = window.devicePixelRatio || 1, { W, cx, cy, R } = geom();
+    if (!W) return;
+    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(W * dpr); }
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, W);
+    // 邊緣撥動區（提示自轉）
+    g.strokeStyle = 'rgba(88,106,119,0.35)'; g.lineWidth = 1; g.setLineDash([4, 5]);
+    g.beginPath(); g.arc(cx, cy, R * 1.18, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+    // 球體
+    const grd = g.createRadialGradient(cx - R * 0.35, cy - R * 0.4, R * 0.1, cx, cy, R);
+    grd.addColorStop(0, '#ffffff'); grd.addColorStop(1, '#a9bccb');
+    g.fillStyle = grd; g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = '#586a77'; g.lineWidth = 1.5; g.stroke();
+    // 經緯線：旋轉後只畫朝向觀看者的半球
+    const C = quatToC(ball.q);
+    const rot = (p) => [C[0][0] * p[0] + C[0][1] * p[1] + C[0][2] * p[2], C[1][0] * p[0] + C[1][1] * p[1] + C[1][2] * p[2], C[2][0] * p[0] + C[2][1] * p[1] + C[2][2] * p[2]];
+    for (const L of LINES) {
+      g.strokeStyle = L.kind === 'mark' ? '#e8178c' : L.kind === 'eq' ? '#00a88f' : 'rgba(43,58,68,0.45)';
+      g.lineWidth = L.kind === 'mark' || L.kind === 'eq' ? 2.2 : 1;
+      g.beginPath(); let on = false;
+      for (const p of L.pts) {
+        const q = rot(p);
+        if (q[2] < 0) { on = false; continue; }
+        const x = cx + q[0] * R, y = cy - q[1] * R;
+        if (!on) { g.moveTo(x, y); on = true; } else g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+    // 北極點
+    const np = rot([0, 0, 1]);
+    if (np[2] > 0) { g.fillStyle = '#e8178c'; g.beginPath(); g.arc(cx + np[0] * R, cy - np[1] * R, 4, 0, Math.PI * 2); g.fill(); }
+    // 命令箭頭：水平速度方向（上 = 前）
+    const st = ball.sticks();
+    if (st.pitch || st.roll) {
+      const ex = cx + st.roll * R * 0.9, ey = cy - st.pitch * R * 0.9;
+      g.strokeStyle = '#e8178c'; g.lineWidth = 3; g.beginPath(); g.moveTo(cx, cy); g.lineTo(ex, ey); g.stroke();
+      const a = Math.atan2(ey - cy, ex - cx);
+      g.fillStyle = '#e8178c'; g.beginPath(); g.moveTo(ex, ey);
+      g.lineTo(ex - 10 * Math.cos(a - 0.4), ey - 10 * Math.sin(a - 0.4)); g.lineTo(ex - 10 * Math.cos(a + 0.4), ey - 10 * Math.sin(a + 0.4)); g.fill();
+    }
+    // 自轉弧：右轉 = 順時針
+    if (st.yaw) {
+      const span = st.yaw * Math.PI * 0.9, a0 = -Math.PI / 2;
+      g.strokeStyle = '#00a88f'; g.lineWidth = 4; g.beginPath(); g.arc(cx, cy, R * 1.18, a0, a0 + span, span < 0); g.stroke();
+    }
+    // 前方標示
+    g.fillStyle = '#586a77'; g.font = '11px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'top';
+    g.fillText('▲ 機頭', cx, 2);
+    if (braking()) { g.fillStyle = 'rgba(184,106,0,0.9)'; g.textBaseline = 'bottom'; g.fillText('煞車', cx, W - 2); }
+  }
+  return { draw, braking, isTouching: () => ui.dragging };
+})();
+
+// ---------- 攝影機手勢：MediaPipe → 虛擬手 → 轉球 ----------
+// 依賴：ball、HAND、createGripTracker、fingerNormal、handRotation
+const HandCam = (() => {
+  const MP_VERSIONS = ['1.0.1', '0.10.22', '0.10.14', ''];   // 依序嘗試（'' = 最新版）
+  const MODEL_URLS = [
+    'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task',
+    'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task',
+  ];
+  const CONN = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
+  const video = $('cam'), layer = $('handLayer'), pv = $('planeView');
+  const H = {
+    on: false, status: 'off', msg: '', recog: null, stream: null, lastVT: -1,
+    recog2: null, mode: 1, backT: 0,   // 兩個辨識器：R1（numHands 1，平常用）、R2（numHands 2，有小手干擾時用，挑最大的）
+    selW: null, nHands: 0, handR: 0, tooFar: false, inferMs: 0,   // 選中那隻手的手腕位置（追蹤身分）、偵測到幾隻、掌長佔畫面高度比例、推論耗時
+    mirror: null,          // 自動判斷：+1 = 輸入畫面已鏡像（筆電驅動鏡像）、−1 = 沒鏡像（多數手機前鏡頭）；null = 判斷中
+    scale: 0, screenPerM: 1, bx: 0, by: 0,   // 映射：鏡頭比例尺（像素/公尺）、螢幕比例尺、球心（手圖層座標）
+    yawOK: false, palmAng: 0,                  // 手掌面向螢幕（可轉向）與手掌法向量和 Z 的夾角
+    hv: 0, hvN: 0,         // 鏡像判斷的平滑值（+1 = 已鏡像、−1 = 沒鏡像）與採用的幀數
+    chi: 0, label: '',     // 顯示用：手性 χ（右手 > 0）、MediaPipe 原始 Right/Left 標籤
+    pts2: null, W3: null, inZone: false, fist: false, gesture: '',
+    grip: createGripTracker(), stroke: createStrokeTracker(), tq: [0, 0, 0], wHand: [0, 0, 0], prevSm: null, lastT: 0, fps: 0, version: '', delegate: '',
+  };
+
+  async function loadModel() {
+    let mod = null, fileset = null;
+    for (const v of MP_VERSIONS) {
+      const base = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision' + (v ? '@' + v : '');
+      try { mod = await import(base + '/vision_bundle.mjs'); fileset = await mod.FilesetResolver.forVisionTasks(base + '/wasm'); H.version = v || 'latest'; break; }
+      catch (e) { mod = null; }
+    }
+    if (!mod) throw new Error('無法載入 MediaPipe（檢查網路）');
+    for (const delegate of ['GPU', 'CPU']) for (const url of MODEL_URLS) {
+      try {
+        H.recog = await mod.GestureRecognizer.createFromOptions(fileset, { baseOptions: { modelAssetPath: url, delegate }, runningMode: 'VIDEO', numHands: 1 });
+        H.delegate = delegate;
+        // R2：每幀只餵 R1 或 R2 其中一個，推論成本不加倍，只多一份記憶體。建不起來就只用 R1
+        try { H.recog2 = await mod.GestureRecognizer.createFromOptions(fileset, { baseOptions: { modelAssetPath: url, delegate }, runningMode: 'VIDEO', numHands: 2 }); }
+        catch (e) { H.recog2 = null; }
+        return;
+      } catch (e) { /* 換下一個組合 */ }
+    }
+    throw new Error('無法建立手勢模型');
+  }
+  async function start() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { H.status = 'err'; H.msg = '這個網址不能用攝影機：請用 https（例如 GitHub Pages）或 localhost 開啟'; return; }
+    H.status = 'loading'; H.msg = '載入手勢模型…';
+    try {
+      if (!H.recog) await loadModel();
+      H.msg = '開啟前鏡頭…';
+      H.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      video.srcObject = H.stream; video.muted = true; video.playsInline = true; await video.play();
+    } catch (e) {
+      H.status = 'err'; H.msg = (e && e.name === 'NotAllowedError') ? '攝影機權限被拒絕' : ('無法啟動：' + (e && e.message ? e.message : e)); stop(true); return;
+    }
+    H.on = true; ball.noFric = true; H.scale = 0; H.yawOK = false; H.lastAct = ''; H.status = 'nohand'; H.msg = ''; H.mirror = null; H.hv = 0; H.hvN = 0; H.mode = 1; H.backT = 0; H.selW = null;
+    requestAnimationFrame(loop);
+  }
+  function stop(keepMsg) {
+    H.on = false; ball.noFric = false; H.grip.reset(); H.stroke.reset(); H.pts2 = null; H.inZone = false;
+    if (H.stream) H.stream.getTracks().forEach((t) => t.stop()); H.stream = null;
+    if (!keepMsg) { H.status = 'off'; H.msg = ''; }
+  }
+  function loop() {
+    if (!H.on) return;
+    if (video.readyState >= 2 && video.currentTime !== H.lastVT) {
+      H.lastVT = video.currentTime;
+      const now = performance.now();
+      let res = null;
+      const R = H.mode === 2 && H.recog2 ? H.recog2 : H.recog;
+      try { res = R.recognizeForVideo(video, now); } catch (e) { res = null; }
+      H.inferMs += (performance.now() - now - H.inferMs) * 0.1;
+      const dt = H.lastT ? (now - H.lastT) / 1000 : 0; H.lastT = now;
+      if (dt > 0) H.fps += (1 / dt - H.fps) * 0.1;
+      const k = pickHand(res, dt);
+      process(k >= 0 ? res : null, dt, k);
+      if (k < 0 && H.tooFar) H.status = 'far';
+    }
+    requestAnimationFrame(loop);
+  }
+  // 映射：以「手的實際大小」當尺，鏡頭中央 = 球心
+  //   比例尺 s（鏡頭像素 / 公尺）= 2D 關鍵點對 3D 世界座標（x、y）的最小平方縮放：只跟距離有關，手傾斜不影響（不像量 2D 掌長會被透視縮短）
+  //   螢幕位置 = 球心 + (鏡頭像素 − 鏡頭中央) / s × (螢幕像素 / 公尺)
+  //   → 遠近手都一樣大；手偏離鏡頭中央 1 個掌長，虛擬手就偏離球心 PALM_R 個球半徑
+  const imgPx = (p) => [((H.mirror === 1 ? p.x : 1 - p.x) - 0.5) * (video.videoWidth || 640), (p.y - 0.5) * (video.videoHeight || 480)];
+  function fitScale(lm, W3) {
+    const P = lm.map(imgPx), cp = [0, 0], cw = [0, 0];
+    P.forEach((q, i) => { cp[0] += q[0]; cp[1] += q[1]; cw[0] += W3[i][0]; cw[1] += -W3[i][1]; });
+    cp[0] /= P.length; cp[1] /= P.length; cw[0] /= P.length; cw[1] /= P.length;
+    let num = 0, den = 0;
+    P.forEach((q, i) => { const a = W3[i][0] - cw[0], b = -W3[i][1] - cw[1]; num += (q[0] - cp[0]) * a + (q[1] - cp[1]) * b; den += a * a + b * b; });
+    return den > 1e-12 && num > 0 ? num / den : 0;
+  }
+  // 掌長佔畫面高度比例：原始鏡頭座標下（影像 x、y 與世界 x、y 同向，不用管鏡像）2D 對 3D 的最小平方縮放 × 掌長 / 畫面高
+  function handRatio(lm, wl) {
+    const vw = video.videoWidth || 640, vh = video.videoHeight || 480, n = lm.length;
+    let px = 0, py = 0, wx = 0, wy = 0;
+    for (let i = 0; i < n; i++) { px += lm[i].x * vw; py += lm[i].y * vh; wx += wl[i].x; wy += wl[i].y; }
+    px /= n; py /= n; wx /= n; wy /= n;
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++) { const a = wl[i].x - wx, b = wl[i].y - wy; num += (lm[i].x * vw - px) * a + (lm[i].y * vh - py) * b; den += a * a + b * b; }
+    return den > 1e-12 && num > 0 ? (num / den) * HAND.PALM_M / vh : 0;
+  }
+  // 挑手 + 模式切換。回傳要用的手的索引，-1 = 沒有可用的手（H.tooFar = 有手但都太小）
+  //   模式 1（R1）：追到的手太小 → 模型名額被小手佔住、不會再找你的手 → 下一幀改餵 R2
+  //   模式 2（R2，最多 2 隻）：挑最大且過門檻的；只剩 1 隻夠大的手連續 BACK_S 秒（或沒手）→ 回模式 1
+  //     回模式 1 時小手已不在畫面：R1 記得的舊位置追不到東西 → 重新偵測 → 抓到你的手
+  //   黏著：和上一幀手腕最近的那隻 = 同一隻手（MediaPipe 回傳順序不固定），別的手要大 SWITCH_K 倍才換
+  function pickHand(res, dt) {
+    const L = (res && res.landmarks) || [], Wl = (res && res.worldLandmarks) || [];
+    const n = Math.min(L.length, Wl.length), rs = [];
+    for (let i = 0; i < n; i++) rs.push(handRatio(L[i], Wl[i]));
+    H.nHands = n; H.tooFar = false;
+    let big = -1, cur = -1, best = 1e9;
+    for (let i = 0; i < n; i++) {
+      if (big < 0 || rs[i] > rs[big]) big = i;
+      if (H.selW) { const d = Math.hypot(L[i][0].x - H.selW[0], L[i][0].y - H.selW[1]); if (d < 0.15 && d < best) { best = d; cur = i; } }
+    }
+    let k = cur >= 0 && rs[cur] >= HAND.MIN_R && !(rs[big] > HAND.SWITCH_K * rs[cur]) ? cur : big;
+    if (k >= 0 && rs[k] < HAND.MIN_R) { H.tooFar = true; H.handR = rs[k]; k = -1; }
+    // 模式切換
+    if (H.mode === 1) { if (H.tooFar && H.recog2) { H.mode = 2; H.backT = 0; } }
+    else {
+      const okN = rs.filter((r) => r >= HAND.MIN_R).length;
+      if (n === 0) H.mode = 1;
+      else if (n === 1 && okN === 1) { H.backT += dt; if (H.backT >= HAND.BACK_S) H.mode = 1; }
+      else H.backT = 0;
+    }
+    // 換了一隻手：比例尺、撥球錨點重來，避免跳動被當成一次撥球
+    if (k >= 0 && cur >= 0 && k !== cur) { H.scale = 0; H.stroke.reset(); }
+    if (k >= 0) { H.selW = [L[k][0].x, L[k][0].y]; H.handR = rs[k]; } else H.selW = null;
+    return k;
+  }
+  const toScreen = (p) => { const q = imgPx(p), k = H.screenPerM / H.scale; return [H.bx + q[0] * k, H.by + q[1] * k]; };
+  function process(res, dt, k) {
+    const lm = res && res.landmarks && res.landmarks[k], wl = res && res.worldLandmarks && res.worldLandmarks[k];
+    if (!lm || !wl) { H.pts2 = null; H.W3 = null; H.inZone = false; H.fist = false; H.gesture = ''; H.grip.update(null); H.stroke.update(null); H.prevSm = null; H.status = 'nohand'; return; }
+    const g = res.gestures && res.gestures[k] && res.gestures[k][0];
+    H.gesture = g ? g.categoryName : ''; H.fist = !!g && g.categoryName === 'Closed_Fist' && g.score >= HAND.FIST;
+    const palm = [0, 5, 9, 13, 17].reduce((a, i) => ({ x: a.x + lm[i].x / 5, y: a.y + lm[i].y / 5 }), { x: 0, y: 0 });
+    // 輸入畫面有沒有鏡像：用手性（三重積）判斷，不依賴 MediaPipe 的 Right/Left 標籤（標籤慣例不可靠，實測判反過）
+    //   χ = −(拇指根 − 手腕) · [(小指根 − 手腕) × (食指根 − 手腕)]，在鏡頭座標（x 右、y 下、z 遠離鏡頭，右手系）計算
+    //   括號 = 右手的手背法向量；拇指根解剖上偏手心側 → 真的右手 χ > 0。旋轉不改變三重積正負號，反射（鏡像）會
+    //   系統假設用右手：χ > 0 = 重建出右手 = 輸入沒鏡像；χ < 0 = 重建出左手 = 輸入被鏡像過
+    //   拇指攤平貼掌面時 χ ≈ 0 不可靠 → 只採用 |χ| 夠大的幀，平滑後才切換，偶爾判錯不會跳
+    const hd = res.handedness || res.handednesses, h = hd && hd[k] && hd[k][0];
+    H.label = h ? h.categoryName : '';   // 只做顯示，方便實測比對
+    {
+      const A = (i) => [wl[i].x, wl[i].y, wl[i].z], c0 = A(0), b = vcross(vsub(A(17), c0), vsub(A(5), c0));
+      const th = vsub(A(1).map((v, i) => (v + A(2)[i]) / 2), c0);   // 拇指根：關鍵點 1、2 的中點
+      const nb = Math.hypot(...b), nt = Math.hypot(...th);
+      H.chi = nb > 1e-9 && nt > 1e-9 ? -vdot(th, b) / (nb * nt) : 0;
+      if (Math.abs(H.chi) >= HAND.CHI_MIN) { H.hv += ((H.chi > 0 ? -1 : 1) - H.hv) * 0.15; H.hvN++; }   // hv：+1 = 已鏡像、−1 = 沒鏡像
+    }
+    if (H.hv > 0.3) H.mirror = 1; else if (H.hv < -0.3) H.mirror = -1;
+    if (H.mirror === null || H.hvN < 8) { H.status = 'detect'; H.pts2 = null; H.W3 = null; return; }
+    // 世界座標（鏡頭座標：x 右、y 下、z 離鏡頭越遠越大）→ W（你的座標）：X = 你的右、Y = 上、Z = 朝向你
+    //   未鏡像畫面：W = (−x, −y, z) 繞垂直軸 180° 的純旋轉；已鏡像畫面：重建出來的手本身 x 已反過一次 → W = (x, −y, z)
+    const sx = H.mirror === 1 ? 1 : -1;
+    H.W3 = wl.map((p) => [sx * p.x, -p.y, p.z]);
+    // 映射到螢幕（球心為中心、手的大小固定）
+    const r = $('ballZone').getBoundingClientRect(), lr = layer.getBoundingClientRect();
+    const bc = $('ball').getBoundingClientRect(), bR = bc.width / 2 / 1.3;
+    H.bx = bc.left + bc.width / 2 - lr.left; H.by = bc.top + bc.height / 2 - lr.top; H.screenPerM = HAND.PALM_R * bR / HAND.PALM_M;
+    const s1 = fitScale(lm, H.W3);
+    if (s1 > 0) H.scale = H.scale ? H.scale + HAND.SCALE_EMA * (s1 - H.scale) : s1;
+    if (!H.scale) { H.pts2 = null; return; }
+    const ps = toScreen(palm);
+    H.pts2 = lm.map(toScreen);
+    H.inZone = ps[0] + lr.left >= r.left && ps[0] + lr.left <= r.right && ps[1] + lr.top >= r.top && ps[1] + lr.top <= r.bottom;
+    H.ps = ps;
+    // 手掌面向螢幕？手掌平面（手腕、食指根、小指根，剛性、比指尖穩）的法向量和 Z 的夾角，手心或手背朝鏡頭都算
+    {
+      const nb = vcross(vsub(H.W3[17], H.W3[0]), vsub(H.W3[5], H.W3[0])), l = Math.hypot(...nb);
+      H.palmAng = l > 1e-12 ? Math.acos(clamp(Math.abs(nb[2]) / l, 0, 1)) : Math.PI / 2;
+      if (H.palmAng < HAND.YAW_IN) H.yawOK = true; else if (H.palmAng > HAND.YAW_OUT) H.yawOK = false;
+    }
+    const tips = HAND.TIPS.map((i) => H.W3[i]);
+    const active = H.inZone && !H.fist;
+    H.grip.update(tips, active);   // 只做顯示：5 指平面、法向量、手的轉動
+    // 撥球：5 根指尖在畫面上的移動，像 5 個滑鼠游標推動球面（球的位置換算到手的圖層座標）
+    const strokes = H.stroke.update(HAND.TIPS.map((i) => H.pts2[i]), active, bR, H.pts2[0]);
+    if (strokes) {
+      // 主導動作鎖定：手掌面向螢幕、且扭轉弧長 ≥ DOM × 平移 → 只算轉向（像轉面向你的方向盤：逆時針 = 左轉）
+      //   否則只算平移：在球心撥（r = 正對你的那一點），撥球時順帶的小扭轉丟掉
+      const arc = Math.abs(strokes.phi) * strokes.rad, tn = Math.hypot(strokes.t[0], strokes.t[1]);
+      let dw;
+      if (H.yawOK && arc >= HAND.DOM * tn) { dw = [0, 0, BALL.GAIN * strokes.phi]; H.lastAct = 'yaw'; }
+      else { const vt = ball.contactDelta(0, 0, strokes.t[0] / bR, -strokes.t[1] / bR); dw = [vt[0], vt[1], 0]; H.lastAct = 'move'; }
+      dw = dw.map((v, i) => v * HAND.SIGN[i]);
+      ball.addRotation(dw, 1);
+      H.tq = H.tq.map((x, i) => x + dw[i]);
+    }
+    H.tq = H.tq.map((x) => x * 0.9);   // 黑棒顯示用：最近施加的力矩方向（慢慢淡出）
+    if (H.inZone && H.fist) ball.stop();
+    // 顯示用：手的角速度（每幀轉動 / dt，低通）
+    if (H.prevSm && dt > 0) { const r1 = handRotation(H.prevSm, H.grip.sm); H.wHand = H.wHand.map((v, i) => v + (r1[i] / dt - v) * 0.25); }
+    H.prevSm = H.grip.sm.map((p) => p.slice());
+    H.status = !H.inZone ? 'out' : H.fist ? 'fist' : 'grip';
+  }
+
+  // ---- 畫：虛擬手（全螢幕）、5 指平面（小視窗）、狀態 ----
+  const STATE_TXT = { off: '', loading: '', err: '', detect: '判斷中', nohand: '沒偵測到手', far: '手太遠（靠近一點）', out: '手在色塊外：球靠慣性轉', grip: '操作中：撥球', fist: '握拳：球停' };
+  function drawHand() {
+    const dpr = window.devicePixelRatio || 1, W = layer.clientWidth, Hh = layer.clientHeight;
+    if (layer.width !== Math.round(W * dpr) || layer.height !== Math.round(Hh * dpr)) { layer.width = Math.round(W * dpr); layer.height = Math.round(Hh * dpr); }
+    const g = layer.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, Hh);
+    const P2 = H.on && H.pts2, Q = H.W3;
+    if (!P2 || !Q) return;
+    // 觀看：繞 Y 轉 −AZ（看手的右側）、繞 X 轉 EL（從上方看），透視距離 0.6 m；大小對齊鏡頭裡手的大小
+    const ca = Math.cos(HAND.VIEW_AZ), sa = Math.sin(HAND.VIEW_AZ), ce = Math.cos(HAND.VIEW_EL), se = Math.sin(HAND.VIEW_EL);
+    const V = Q.map((p) => { const x1 = p[0] * ca - p[2] * sa, z1 = p[0] * sa + p[2] * ca; return [x1, p[1] * ce - z1 * se, p[1] * se + z1 * ce]; });
+    const len3 = Math.hypot(Q[0][0] - Q[9][0], Q[0][1] - Q[9][1], Q[0][2] - Q[9][2]) || 0.08;
+    const k = Math.hypot(P2[0][0] - P2[9][0], P2[0][1] - P2[9][1]) / len3, D = 0.6;
+    const cpal = [0, 5, 9, 13, 17].reduce((a, i) => [a[0] + V[i][0] / 5, a[1] + V[i][1] / 5], [0, 0]);
+    const S = V.map((p) => { const f = D / Math.max(0.2, D - p[2]); return [H.ps[0] + k * f * (p[0] - cpal[0]), H.ps[1] - k * f * (p[1] - cpal[1]), p[2]]; });
+    let zmin = Infinity, zmax = -Infinity; S.forEach((p) => { zmin = Math.min(zmin, p[2]); zmax = Math.max(zmax, p[2]); });
+    const near = (z) => (zmax - zmin < 1e-6 ? 0.5 : (z - zmin) / (zmax - zmin));   // 0 = 最遠、1 = 最近
+    // 手掌：右手的手背法向量 = (小指根 − 手腕) × (食指根 − 手腕)；朝向你 = 看到手背
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const nb = vcross(sub(V[17], V[0]), sub(V[5], V[0])), back = nb[2] > 0;
+    g.fillStyle = back ? 'rgba(214,160,120,0.45)' : 'rgba(0,168,143,0.30)';
+    g.beginPath(); [0, 1, 5, 9, 13, 17].forEach((i, n) => (n ? g.lineTo(S[i][0], S[i][1]) : g.moveTo(S[i][0], S[i][1]))); g.closePath(); g.fill();
+    const pc = [0, 5, 9, 13, 17].reduce((a, i) => [a[0] + S[i][0] / 5, a[1] + S[i][1] / 5], [0, 0]);
+    g.fillStyle = back ? '#8a5a3a' : '#007a68'; g.font = '13px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText(back ? '手背' : '手心', pc[0], pc[1] + 4); g.textAlign = 'left';
+    // 骨頭：由遠到近畫，越近越粗越深
+    const col = H.status === 'fist' ? [184, 106, 0] : H.inZone ? [0, 140, 120] : [43, 58, 68];
+    const bones = CONN.map(([a, b]) => ({ a, b, z: (S[a][2] + S[b][2]) / 2 })).sort((u, v) => u.z - v.z);
+    g.lineCap = 'round';
+    for (const bo of bones) {
+      const t = near(bo.z);
+      g.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${0.35 + 0.65 * t})`; g.lineWidth = 2 + 4 * t;
+      g.beginPath(); g.moveTo(S[bo.a][0], S[bo.a][1]); g.lineTo(S[bo.b][0], S[bo.b][1]); g.stroke();
+    }
+    HAND.TIPS.forEach((i, n) => { const t = near(S[i][2]); g.fillStyle = n === 0 ? '#f07a1a' : '#e8178c'; g.globalAlpha = 0.45 + 0.55 * t; g.beginPath(); g.arc(S[i][0], S[i][1], (n === 0 ? 5 : 4) + 4 * t, 0, Math.PI * 2); g.fill(); });
+    g.globalAlpha = 1;
+  }
+  function drawPlane() {
+    const panel = $('planePanel');
+    panel.hidden = !H.on;
+    if (!H.on) return;
+    $('planeTitle').textContent = `5 指平面 · ${STATE_TXT[H.status] || ''}${H.fps ? ' · ' + Math.round(H.fps) + ' fps' : ''}`
+      + ` · 模式${H.mode} · 手${H.nHands} · 掌${Math.round(H.handR * 100)}% · 推論 ${H.inferMs.toFixed(1)} ms`
+      + ` · 轉向${H.yawOK ? '✓' : '✗'}（手掌∠${Math.round(H.palmAng / DEG)}°）${H.lastAct === 'yaw' ? ' ⟳' : ''}`
+      + ` · χ ${H.chi >= 0 ? '+' : ''}${H.chi.toFixed(2)} · 標籤 ${H.label || '—'} · 輸入${H.mirror === 1 ? '已鏡像' : H.mirror === -1 ? '未鏡像' : '判斷中'}`;
+    const dpr = window.devicePixelRatio || 1, S = pv.clientWidth;
+    if (!S) return;
+    if (pv.width !== Math.round(S * dpr)) { pv.width = Math.round(S * dpr); pv.height = Math.round(S * dpr); }
+    const g = pv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, S, S);
+    // 正面視角（和你看螢幕的方向相同）：右 = X、上 = Y；Z（朝向你）看不出長度，用法向量末端的實心 / 空心表示
+    const k = S * 0.33 / 0.06, ox = S / 2, oy = S * 0.42;
+    const proj = (p) => [ox + k * p[0], oy - k * p[1]];
+    [[[0.03, 0, 0], '#cc3a40', '右'], [[0, 0.03, 0], '#22825a', '上']].forEach(([v, c, t]) => {
+      const a = proj([0, 0, 0]), b = proj(v); g.strokeStyle = c; g.globalAlpha = 0.35; g.lineWidth = 1.5; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+      g.globalAlpha = 0.6; g.fillStyle = c; g.font = '10px system-ui, sans-serif'; g.fillText(t, b[0] + 2, b[1]); g.globalAlpha = 1;
+    });
+    const sm = H.grip.sm;
+    if (sm) {
+      const c = centroid(sm), P = sm.map((p) => proj(vsub(p, c)));
+      g.fillStyle = 'rgba(232,23,140,0.18)'; g.strokeStyle = 'rgba(232,23,140,0.7)'; g.lineWidth = 1.5;
+      g.beginPath(); P.forEach((q, i) => (i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]))); g.closePath(); g.fill(); g.stroke();
+      P.forEach((q, i) => { g.fillStyle = i === 0 ? '#f07a1a' : '#e8178c'; g.beginPath(); g.arc(q[0], q[1], i === 0 ? 5 : 4, 0, Math.PI * 2); g.fill(); });
+      g.fillStyle = '#f07a1a'; g.font = '11px system-ui, sans-serif'; g.fillText('拇', P[0][0] + 6, P[0][1] + 4);
+      // 灰線 = 法向量（拇指 → 小指正轉的轉軸）；黑棒 = 剛剛實際施加給球的力矩方向。末端實心 = 指向你、空心 = 指向螢幕裡
+      const n = H.grip.n, a = proj([0, 0, 0]), c0 = proj(n.map((v) => v * 0.04));
+      g.strokeStyle = 'rgba(88,106,119,0.6)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(c0[0], c0[1]); g.stroke();
+      const tm = Math.hypot(...H.tq);
+      if (tm > 0.02) {
+        const t = H.tq.map((v) => v / tm), b = proj(t.map((v) => v * 0.045)), toYou = t[2] >= 0;
+        g.strokeStyle = '#12202a'; g.lineWidth = 2.5; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+        g.beginPath(); g.arc(b[0], b[1], 5, 0, Math.PI * 2);
+        if (toYou) { g.fillStyle = '#12202a'; g.fill(); } else { g.fillStyle = '#fff'; g.fill(); g.lineWidth = 2; g.stroke(); }
+        g.fillStyle = '#12202a'; g.font = '10px system-ui, sans-serif'; g.fillText(`黑棒 = 給球的力矩 ${toYou ? '● 指向你' : '○ 指向螢幕'}`, 4, 12);
+      } else { g.fillStyle = '#586a77'; g.font = '10px system-ui, sans-serif'; g.fillText('灰線 = 法向量（拇→小指正轉軸）', 4, 12); }
+      // 錨點進度：指尖離下一次推球還差多少
+      const live = H.stroke.prog;
+      g.strokeStyle = '#00a88f'; g.lineWidth = 3; g.beginPath(); g.arc(S - 16, 16, 9, -Math.PI / 2, -Math.PI / 2 + clamp(live, 0, 1) * Math.PI * 2); g.stroke();
+      // 數字
+      const tilt = Math.acos(clamp(Math.abs(n[2]), 0, 1)) / DEG, w = H.wHand.map((v) => v / DEG);
+      g.fillStyle = '#12202a'; g.font = '10px ui-monospace, Menlo, monospace';
+      g.fillText(`n ${n.map((v) => (v >= 0 ? '+' : '') + v.toFixed(2)).join(' ')}`, 4, S - 30);
+      g.fillText(`傾斜 ${tilt.toFixed(0)}°（離正對鏡頭）`, 4, S - 17);
+      g.fillText(`手 ω ${w.map((v) => (v >= 0 ? '+' : '') + v.toFixed(0)).join(' ')} °/s`, 4, S - 4);
+    } else {
+      g.fillStyle = '#586a77'; g.font = '12px system-ui, sans-serif'; g.fillText('把手放到鏡頭前', 8, S - 10);
+    }
+  }
+  function draw() {
+    drawHand(); drawPlane();
+    const cal = $('calib');
+    cal.hidden = !(H.on && H.status === 'detect') && !(H.status === 'loading' || H.status === 'err');
+    if (H.status === 'detect') cal.textContent = '請用右手：把右手放到鏡頭前';
+    else if (H.status === 'loading' || H.status === 'err') cal.textContent = H.msg;
+    const btn = $('btnCam'); btn.classList.toggle('on', H.on); btn.textContent = H.on ? '📷 關閉手勢' : '📷 手勢';
+  }
+  $('btnCam').addEventListener('click', () => { if (H.on) stop(); else if (H.status !== 'loading') start(); });
+  // 反轉按鈕：前後、左右、轉向各自翻正負號（記住在這台瀏覽器）
+  try { const v = JSON.parse(localStorage.getItem('dg_sign4') || 'null'); if (Array.isArray(v) && v.length === 3) HAND.SIGN = v.map((x) => (x < 0 ? -1 : 1)); } catch (e) { /* 忽略 */ }
+  const syncSigns = () => document.querySelectorAll('#signs button').forEach((b) => b.classList.toggle('on', HAND.SIGN[+b.dataset.k] < 0));
+  document.querySelectorAll('#signs button').forEach((b) => b.addEventListener('click', () => {
+    const k = +b.dataset.k; HAND.SIGN[k] = -HAND.SIGN[k]; syncSigns();
+    try { localStorage.setItem('dg_sign4', JSON.stringify(HAND.SIGN)); } catch (e) { /* 忽略 */ }
+  }));
+  syncSigns();
+  window.app_debug.hand = H;
+  return { draw, state: H, active: () => H.on && H.inZone && !H.fist };
+})();
+
+// ---------- HUD、按鈕 ----------
+function updateHud() {
+  const gs = Math.hypot(sim.vel[0], sim.vel[1]), hdg = ((sim.eul[2] / DEG) % 360 + 360) % 360;
+  const mode = { cruise: '巡航', brake: '煞車中', hold: '定點' }[sim.pc.mode];
+  $('hud').innerHTML = [
+    ['狀態', mode], ['地速', `${gs.toFixed(1)} m/s`], ['航向', `${Math.round(hdg).toString().padStart(3, '0')}°`],
+    ['高度', `${(-sim.pos[2]).toFixed(2)} m`], ['距起點', `${Math.hypot(sim.pos[0], sim.pos[1]).toFixed(1)} m`],
+  ].map(([k, v]) => `<span class="k">${k}</span><span>${v}</span>`).join('');
+  const st = ball.sticks(), sg = (v, d) => (v < 0 ? '−' : '+') + Math.abs(v).toFixed(d);
+  $('ballCmd').textContent = `前 ${sg(st.pitch * FLY.velMax, 1)}  右 ${sg(st.roll * FLY.velMax, 1)} m/s · 轉 ${sg(st.yaw * FLY.yawRate / DEG, 0)}°/s`;
+}
+function refly() { sim.reset(); ball.reset(); Trail.clear(); Cam.reset(); }
+$('btnRefly').addEventListener('click', refly);
+async function toggleFull() {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  } catch (e) { /* 內嵌頁面可能不允許全螢幕 */ }
+}
+$('btnFull').addEventListener('click', toggleFull);
+document.addEventListener('fullscreenchange', () => { $('btnFull').textContent = document.fullscreenElement ? '退出全螢幕' : '全螢幕'; });
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  if (e.code === 'KeyR') refly();
+  if (e.code === 'KeyF') toggleFull();
+});
+
+// ---------- 主迴圈 ----------
+let lastTs = performance.now(), hudAcc = 0;
+function frame(ts) {
+  const dt = Math.min(0.05, (ts - lastTs) / 1000); lastTs = ts;
+  ball.step(dt, BallUI.braking(), BallUI.isTouching() || HandCam.active());
+  Object.assign(sim.sticks, ball.sticks());
+  const steps = Math.round(dt / DT);
+  for (let i = 0; i < steps; i++) sim.step();
+  Drone.sync(dt); Trail.update(); Cam.place(dt);
+  renderer.render(scene, camera);
+  BallUI.draw(); HandCam.draw();
+  hudAcc += dt; if (hudAcc > 0.1) { hudAcc = 0; updateHud(); }
+  requestAnimationFrame(frame);
+}
+resize(); Cam.reset(); updateHud();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

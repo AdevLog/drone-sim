@@ -21,6 +21,12 @@ A browser-based quadcopter simulator for understanding how PID gains and sensors
 - **Motors & sensors panel** (3-axis, free flight, hover tuning): per-motor efficiency (PX4 numbering), gyro noise / bias / low-pass cutoff, accelerometer noise / bias, and attitude estimation using the gyro, the accelerometer, or both (simplified Kalman filter), with a true-vs-estimated angle chart.
 - Things to try: weaken one motor and set the rate I gains to 0 → the drone settles at a fixed tilt and drifts away; lower rate P → visible wobble; raise D with gyro noise → motor output jitter; gyro-only estimation with a gyro bias → integration drift.
 
+## Gesture Flight (experimental)
+
+**▶ https://adevlog.github.io/drone-sim/gesture/**
+
+Fly with your hand: an AI hand-tracking model (MediaPipe, running locally in the browser) follows your fingertips through the webcam, and you swipe a virtual ball whose spin commands the drone (altitude hold, Position mode). Needs a camera and HTTPS (the online version works). Details and design rationale: [gesture/REPORT.md](gesture/REPORT.md).
+
 ## Controls (Mode 2)
 
 | Action | Keyboard | Xbox controller / on-screen sticks |
@@ -42,6 +48,7 @@ Download `index.html` and open it in Chrome, Edge or Firefox. three.js is loaded
 ## Docs and tests
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) (Traditional Chinese): program structure, module map, event table, design rationale for the physics, controllers and sensors, and how to add or remove a feature.
+- [gesture/REPORT.md](gesture/REPORT.md): Gesture Flight technical report (model, coordinate mapping, mirror detection, hand selection, known issues).
 - [tests/](tests/): core computation tests (node) and browser regression tests (playwright); run `tests/run_all.sh`.
 
 ## Disclaimer

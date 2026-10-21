@@ -21,6 +21,12 @@
 - **馬達與感測器面板**（三軸姿態、自由飛行、懸停調參）：四顆馬達效率（PX4 編號）、陀螺儀雜訊 / 零點偏差 / 濾波、加速度計雜訊 / 零點偏差；姿態估測可選用陀螺儀、加速度計或兩者（簡化版 Kalman），並畫出真實與估測角度。
 - 可以試：把一顆馬達調弱再把 RATE_I 調成 0 → 停在固定偏角、越飄越遠；P 調小 → 明顯晃動；有陀螺儀雜訊時 D 調大 → 馬達輸出抖動；只用陀螺儀估測 + 零點偏差 → 積分漂移。
 
+## 手勢飛行（實驗）
+
+**▶ https://adevlog.github.io/drone-sim/gesture/**
+
+用手飛：AI 手部辨識模型（MediaPipe，在瀏覽器本地執行）透過 webcam 追蹤指尖，你撥動一顆虛擬球，球的轉動就是飛機的命令（定高、Position 模式）。需要相機與 https（線上版可用）。做法與設計理由見 [gesture/REPORT.zh-TW.md](gesture/REPORT.zh-TW.md)。
+
 ## 操作（美國手 / Mode 2）
 
 | 動作 | 鍵盤 | Xbox 手把 / 畫面搖桿 |
@@ -42,6 +48,7 @@
 ## 文件與測試
 
 - [ARCHITECTURE.md](ARCHITECTURE.md)：程式結構、模組地圖、事件表、物理 / 控制器 / 感測器的設計理由、新增 / 刪除功能的步驟。
+- [gesture/REPORT.zh-TW.md](gesture/REPORT.zh-TW.md)：手勢飛行技術報告（模型、座標映射、鏡像判斷、挑手、已知問題）。
 - [tests/](tests/)：核心計算測試（node）與瀏覽器回歸測試（playwright），執行 `tests/run_all.sh`。
 
 ## 說明

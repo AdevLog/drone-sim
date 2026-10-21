@@ -1,0 +1,73 @@
+<!doctype html>
+<!--
+  手勢飛行 Gesture Flight — 入口頁
+  Copyright (c) 2026 AdevLog — https://github.com/AdevLog
+  MIT License：https://github.com/AdevLog/drone-sim/blob/main/LICENSE
+-->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="author" content="AdevLog">
+<meta name="description" content="用 AI 手勢辨識撥動虛擬球，控制瀏覽器裡的四旋翼。Fly a simulated quadcopter by swiping a virtual ball with your hand.">
+<title>手勢飛行 Gesture Flight</title>
+<style>
+:root { --ink: #12202a; --muted: #586a77; --line: #c9d3da; --bg: #eef2f5; --card: #fff; --cmd: #e8178c; --act: #00a88f; }
+@media (prefers-color-scheme: dark) {
+  :root { --ink: #e4ebf0; --muted: #9aabb8; --line: #34444f; --bg: #121a20; --card: #1b252c; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.6;
+  font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif; }
+main { max-width: 680px; margin: 0 auto; padding: 32px 16px 24px; }
+h1 { font-size: 1.6rem; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 24px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.go { display: inline-block; background: var(--cmd); color: #fff; text-decoration: none; font-weight: 600;
+  padding: 10px 22px; border-radius: 8px; font-size: 1.05rem; }
+.go:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+h2 { font-size: 1.05rem; margin: 0 0 8px; }
+ul { margin: 0; padding-left: 1.2em; }
+li { margin: 4px 0; }
+.en { color: var(--muted); font-size: .9em; }
+footer { text-align: center; color: var(--muted); font-size: .8rem; border-top: 1px solid var(--line); padding-top: 12px; margin-top: 24px; }
+a { color: inherit; text-underline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>手勢飛行 <span class="en">Gesture Flight</span></h1>
+  <p class="sub">用 AI 手勢辨識撥動虛擬球，控制模擬器裡的四旋翼。<br><span class="en">Swipe a virtual ball with your hand to fly a simulated quadcopter.</span></p>
+
+  <div class="card">
+    <p style="margin-top:0"><a class="go" href="drone-gesture-cam.html">▶ 開始飛行 Start</a></p>
+    <p style="margin-bottom:0">進入後按右上角「📷 手勢」並允許使用相機。滑鼠 / 觸控撥球也可以用。<br>
+    <span class="en">Tap “📷 手勢” at the top right and allow camera access. Mouse / touch swiping works too.</span></p>
+  </div>
+
+  <div class="card">
+    <h2>怎麼操作 <span class="en">How to fly</span></h2>
+    <ul>
+      <li>用<b>右手</b>，手放在鏡頭正前方 = 手在球上；用指尖撥球：前後、左右飛。<br><span class="en">Use your right hand. Hand centered in front of the camera = hand on the ball; swipe with your fingertips to move.</span></li>
+      <li>手掌立起、面向螢幕扭轉 = 轉向（像轉方向盤）。<br><span class="en">Palm facing the screen, twist like a steering wheel = yaw.</span></li>
+      <li>握拳 = 停；手移出色塊 = 球靠慣性繼續轉。<br><span class="en">Fist = stop. Move your hand out of the zone = the ball keeps spinning.</span></li>
+      <li>手離鏡頭太遠（約 85 cm 以外）不會被採用，後方人群的手也不會干擾。<br><span class="en">Hands too far away (≈ 85 cm+) are ignored, so people behind you don’t interfere.</span></li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>須知 <span class="en">Notes</span></h2>
+    <ul>
+      <li>影像只在你的瀏覽器裡辨識，不會上傳。<span class="en">Video is processed locally and never uploaded.</span></li>
+      <li>相機只能在 https 網頁使用；下載 HTML 直接開啟會被拒絕。<span class="en">The camera needs HTTPS; a downloaded file opened locally will be denied.</span></li>
+      <li>手機請橫放並固定；第一次載入模型需要網路（約 8 MB）。<span class="en">On a phone, use landscape on a stand. The first load downloads the model (~8 MB).</span></li>
+    </ul>
+  </div>
+
+  <p>技術報告 Technical report：<a href="https://github.com/AdevLog/drone-sim/blob/main/gesture/REPORT.zh-TW.md">繁體中文</a> · <a href="https://github.com/AdevLog/drone-sim/blob/main/gesture/REPORT.md">English</a><br>
+  四旋翼控制實驗台 Quadcopter Control Lab：<a href="../">adevlog.github.io/drone-sim</a></p>
+
+  <footer>© 2026 <a href="https://github.com/AdevLog">AdevLog</a> · <a href="https://github.com/AdevLog/drone-sim/blob/main/LICENSE">MIT License</a></footer>
+</main>
+</body>
+</html>
