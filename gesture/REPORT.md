@@ -119,15 +119,25 @@ Division of labor: **the neural networks answer "where is the hand and what gest
 
 Flipping only X is a **reflection** (determinant −1): it turns a right hand into a left hand, the person in the mirror. The 2D positions match "the user's eyes", but depth is reversed, and so is the direction of every rotation (axial vector).
 
-**Mirror detection (chirality triple product):** laptop cameras often mirror the image in the driver, so the app must detect it.
+**Chirality triple product:** laptop cameras often mirror the image in the driver, so the app needs to know whether the input is mirrored.
 
 ```
 χ = −(thumb base − wrist) · [(pinky base − wrist) × (index base − wrist)]      (in camera coordinates)
 ```
 
 - The bracket is a right hand's back-of-hand normal (pointing from palm to back); the thumb base sits on the palm side, so a real right hand gives χ > 0.
-- A triple product is the sign of a determinant: **unchanged by rotation, flipped by reflection**. χ > 0 = a right hand was reconstructed = input not mirrored; χ < 0 = input mirrored.
-- With the thumb flat against the palm, χ ≈ 0 is unreliable, so only frames with |χ| ≥ 0.15 vote, and the decision is smoothed.
+- A triple product is the sign of a determinant: **unchanged by rotation, flipped by reflection**. So the sign of χ = "which hand" × "mirrored or not".
+- With the thumb flat against the palm, χ ≈ 0 is unreliable, so only frames with |χ| ≥ 0.15 count.
+
+**Mirroring: guess once, then lock; only the Mirror button changes it**
+
+A single image **cannot tell a left hand from a mirrored right hand**: the pixels, and χ, are identical. So mirroring can't be re-decided every frame from χ; otherwise switching to the left hand flips χ, gets read as "the image is now mirrored", and reverses sideways motion, yaw and the skeleton.
+
+Mirroring is a **property of the camera / driver** and doesn't change per frame, so:
+1. The first time a hand is detected, 5 reliable χ values vote, **assuming a right hand**, to guess the mirroring (χ > 0 = not mirrored); the result is locked and saved in the browser.
+2. After that, only the "鏡像" (Mirror) button, key M, changes it. If the guess was wrong (e.g. the left hand was raised first), sideways and yaw are always reversed together, and one press fixes both. The old three "invert" buttons were removed for that reason.
+3. **Which hand:** once mirroring is known, hand = sign(χ) × (mirrored ? −1 : +1), smoothed with hysteresis; when χ is unreliable it falls back to the MediaPipe label (whose convention is uncertain, so the app first learns from reliable frames whether label and χ agree or disagree). Handedness is **only used to label palm / back**; control doesn't depend on it, and either hand can be used at any time.
+4. **Switching hands:** a sign change of reliable χ = a different hand → the swipe anchor and scale reset, so the switch isn't read as a swipe.
 
 ```
 not mirrored: W = (−x, −y, z)
@@ -135,7 +145,7 @@ mirrored:     W = ( x, −y, z)   (the reconstructed hand's x is already flipped
 2D display always shows "what the user's eyes see": flip unmirrored input, keep mirrored input
 ```
 
-> The earlier version inferred mirroring from MediaPipe's Right/Left label (the docs say it assumes selfie-mirrored input). In practice, with tasks-vision, the result was reversed: the virtual hand became the mirror-image left hand, and the user had to press two "invert" buttons to compensate. Inferring geometry from a model's label is fragile, so the app now checks the geometry directly.
+> History: ① mirroring inferred from MediaPipe's Right/Left label: the convention was the opposite of the docs, and the virtual hand became the mirror-image left hand. ② χ decided every frame: right hand correct, but switching to the left hand reversed everything. ③ Now: χ guesses once, then locks, plus a Mirror button.
 
 ### 5.3 Mapping: the hand's size is the ruler
 
@@ -211,12 +221,10 @@ typical laptop camera (≈60° horizontal FOV, 4:3, tan(VFOV/2) ≈ 0.43): Z ≈
 ### 5.6 Display
 
 - **3D virtual hand:** viewed in perspective from behind the user's hand, 25° to the right and 15° above; near bones thick and dark, far ones thin and faint; the palm is colored by the back-of-hand normal and labeled "back / palm".
-- **Five-finger plane panel** (top left, under the status box):
-  - Newell's method over thumb → pinky gives the fingertip-plane normal (gray line; for a right hand it points from back to palm).
-  - Black bar = torque actually applied to the ball.
-  - Title line: state, fps, mode 1/2, number of hands, palm %, inference ms, yaw allowed (palm angle), χ, raw MediaPipe label, mirror decision.
-- Hand 3D rotation (display only): 5 fingertips as a rigid body, least squares `J · Δθ = Σ aᵢ × dᵢ` (J = the fingertips' inertia tensor).
-- Three "invert" buttons (forward / sideways / yaw) for fixing signs during testing, saved in the browser; normally none is needed.
+- The palm coloring is multiplied by handedness: the same formula gives the palm-side normal for a left hand, so palm / back is labeled correctly for either hand.
+- **HUD "手勢" (gesture) row:** state · right / left hand (e.g. "swiping · right hand").
+- **Buttons:** "手勢辨識" (gesture recognition) turns the camera on/off; "鏡像" (Mirror, M) appears only while gestures are on.
+- The development-time five-finger plane panel and title-line debug info (fps, inference ms, χ, …) were removed to keep the screen clean.
 
 ## 6. Bugs and fixes (for future maintainers)
 
@@ -232,6 +240,7 @@ typical laptop camera (≈60° horizontal FOV, 4:3, tan(VFOV/2) ≈ 0.43): Z ≈
 | **Hand had to reach the camera's bottom-right corner; tracking poor at the edge** | camera coordinates scaled straight onto the screen | hand size as the ruler, camera center = ball center |
 | **Swipes often triggered yaw** | any rim swipe turned the drone; fingers arc while swiping | palm-facing-screen gate + dominant-motion lock |
 | **Hands in the crowd behind took over** | the model picks by confidence and holds on | size gate + R1/R2 switch picking the largest hand |
+| **Switching to the left hand reversed sideways motion, yaw and the skeleton** | mirroring was re-decided every frame from χ, but one image can't tell a left hand from a mirrored right hand | guess mirroring once, then lock + Mirror button; handedness is display-only |
 | "Permission denied" on a phone opening the downloaded HTML | the camera is HTTPS/localhost only; in-app HTML viewers (WebView) usually don't grant it | host on GitHub Pages |
 
 ## 7. Verification
@@ -242,6 +251,7 @@ This development environment can't reach the CDNs, so the 3D view and the real M
 2. **Headless Chromium + three.js stub:** mouse / touch events → page state, no errors.
 3. **Synthetic hand** (a full 21-point right hand), with mirrored and unmirrored input:
    - Chirality χ: +0.38 unmirrored, −0.38 mirrored; both restore to thumb on the user's left, back of hand toward the user.
+   - Mirroring and handedness: right hand → mirroring guessed correctly and locked; switch to the left hand → mirroring unchanged, labeled left, thumb restored on the user's right; press Mirror → mirroring and handedness flip together (tested with mirrored and unmirrored input).
    - Hand picking: user only → mode 1; R1 tracking a small hand → ignored, switch to mode 2; R2 seeing both (either return order) → the user's hand is chosen; user alone for 0.6 s → back to mode 1.
 4. **User test on real hardware** (laptop camera): right hand shown as the back of the hand, thumb on the left; moving right moves the virtual hand right; forward, sideways and yaw directions correct with no invert buttons pressed.
 
@@ -249,12 +259,12 @@ This development environment can't reach the CDNs, so the 3D view and the real M
 
 - [x] Altitude-hold flight: mouse / touch swiping, start flag and 10 m markers, fading trail, re-fly (R), fullscreen (F)
 - [x] MediaPipe loading with version fallback and GPU → CPU fallback
-- [x] Mirror detection by chirality χ; pure-rotation frames
+- [x] Chirality χ: mirroring guessed once then locked + Mirror button; either hand works; pure-rotation frames
 - [x] Hand-size mapping (camera center = ball center, fixed virtual hand size)
 - [x] Fingertip swiping (translation + twist about the wrist), anchor-based jitter suppression, fist to stop, active zone
 - [x] Yaw: palm-facing-screen gate + dominant-motion lock
 - [x] Multiple people: size gate, R1/R2 recognizers, stickiness
-- [x] 3D virtual hand (back / palm), five-finger plane panel with debug info
+- [x] 3D virtual hand (back / palm, correct for either hand), gesture state in the HUD
 - [x] Live on GitHub Pages, landing page
 
 ## 9. To do
@@ -269,8 +279,9 @@ This development environment can't reach the CDNs, so the 3D view and the real M
 
 - `HAND.FACE` (removed): flipping the skeleton in place, proven to be a reflection.
 - `MAP_GAIN` (removed): old mapping "camera center region × 1.4 onto the full screen", replaced by §5.3.
-- MediaPipe Right/Left label: no longer used for decisions; shown in the title line for comparison.
-- `HAND.CONTACT = [−1, −1, 1]`, `HAND.GAIN`, `handRotation()`: the old "drive the ball by the hand's 3D rotation"; `handRotation()` is now display-only.
+- MediaPipe Right/Left label: not used for mirroring; only a fallback for handedness (display) when χ is unreliable.
+- `HAND.SIGN = [1, 1, 1]`: the old three "invert" buttons; fixed since the single Mirror button replaced them.
+- `createGripTracker()`, `handRotation()`, `fingerNormal()`: used by the five-finger plane panel (removed); `HAND.CONTACT = [−1, −1, 1]`, `HAND.GAIN`: the old "drive the ball by the hand's 3D rotation".
 
 ## References
 
