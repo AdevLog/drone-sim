@@ -15,7 +15,9 @@
   - 模型：MediaPipe Gesture Recognizer（float16），瀏覽器內 WebAssembly 執行，影像不上傳
     手掌偵測（BlazePalm）→ 21 個關鍵點（含 3D 公制世界座標）→ 手勢分類（只用到「握拳」）
   - 座標：鏡頭座標 → 你的座標 = 繞垂直軸 180° 的純旋轉（右手轉完還是右手）。只翻 X 是反射，會變成鏡子裡的左手
-  - 鏡像判斷：手性三重積 χ（旋轉不變號、反射變號），不用 MediaPipe 的 Right/Left 標籤（實測慣例與文件相反）
+  - 鏡像：輸入畫面有沒有被鏡像（鏡頭 / 驅動的屬性）。第一次偵測到手時用手性三重積 χ 猜一次（假設右手）後鎖定，之後只有「鏡像」鈕（M）會改，記在瀏覽器
+    單張影像分不出「左手」和「鏡像的右手」（像素完全一樣），所以鏡像不能每幀自動判斷，否則換左手就會把方向翻反
+  - 左右手：鏡像確定後，χ 的正負號（不可靠時改用 MediaPipe 標籤）= 哪隻手，只用來標示手心 / 手背；控制和手性無關，左右手隨時可換
   - 映射：以手的實際大小當尺（2D↔3D 最小平方比例尺），鏡頭中央 = 球心，虛擬手遠近一樣大
   - 撥球：5 根指尖像 5 個滑鼠游標推球面；手的移動拆成平移 t 與繞手腕扭轉 phi；錨點法抗抖動
   - 轉向：手掌面向螢幕（法向量與 Z 夾角 < 30°，> 40° 才退出）且扭轉弧長 ≥ 2 × 平移（主導動作鎖定）
@@ -63,14 +65,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #d7e0e6; col
 /* 攝影機手勢 */
 #cam { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 #handLayer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.plane { display: flex; flex-direction: column; gap: 4px;
-  padding: 8px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); pointer-events: none; }
-.plane[hidden] { display: none; }
-#planeView { width: var(--ps); height: var(--ps); display: block; }
-.plane .t { font-size: 12px; color: var(--muted); max-width: var(--ps); line-height: 1.4; }
-.signs { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); pointer-events: auto; }
-.btn.sm { font-size: 12px; padding: 2px 8px; }
-:root { --ps: min(30vmin, 190px); }
 .btn.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 .calib { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); background: var(--panel); border: 1px solid var(--line);
   border-radius: 10px; padding: 10px 16px; font-size: 16px; pointer-events: none; text-align: center; }
@@ -80,18 +74,14 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #d7e0e6; col
 <body>
 <div id="app">
   <div class="tools">
-    <button class="btn" id="btnCam" type="button" title="開啟前鏡頭，用手勢轉球">📷 手勢</button>
+    <button class="btn" id="btnCam" type="button" title="開啟前鏡頭，用 AI 手勢辨識轉球">手勢辨識</button>
+    <button class="btn" id="btnMirror" type="button" hidden title="手的移動方向相反時按這裡（快捷鍵 M）">鏡像</button>
     <button class="btn" id="btnRefly" type="button" title="快捷鍵 R">重飛</button>
     <button class="btn" id="btnFull" type="button" title="快捷鍵 F">全螢幕</button>
   </div>
-  <div class="hint" id="hint">撥球心：前後、左右飛 · 沿球的邊緣撥：轉向 · 按住球不動或按空白鍵：煞車 · 雙擊球：立刻停 · 📷 手勢：手放在鏡頭正前方 = 手在球上，用指尖撥球；手掌立起面向螢幕扭轉 = 轉向；握拳 = 停；手往旁邊移出色塊 = 球靠慣性轉 · R 重飛 · F 全螢幕<br>© 2026 <a href="https://github.com/AdevLog" target="_blank" rel="noopener">AdevLog</a> · <a href="https://github.com/AdevLog/drone-sim/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a> · <a href="../">四旋翼控制實驗台</a> · <a href="https://github.com/AdevLog/drone-sim/blob/main/gesture/REPORT.zh-TW.md" target="_blank" rel="noopener">技術報告</a></div>
+  <div class="hint" id="hint">撥球心：前後、左右飛 · 沿球的邊緣撥：轉向 · 按住球不動或按空白鍵：煞車 · 雙擊球：立刻停 · 手勢辨識：左右手都可以，手放在鏡頭正前方 = 手在球上，用指尖撥球；手掌立起面向螢幕扭轉 = 轉向；握拳 = 停；手往旁邊移出色塊 = 球靠慣性轉；方向相反就按「鏡像」（M） · R 重飛 · F 全螢幕<br>© 2026 <a href="https://github.com/AdevLog" target="_blank" rel="noopener">AdevLog</a> · <a href="https://github.com/AdevLog/drone-sim/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a> · <a href="../">四旋翼控制實驗台</a> · <a href="https://github.com/AdevLog/drone-sim/blob/main/gesture/REPORT.zh-TW.md" target="_blank" rel="noopener">技術報告</a></div>
   <div class="tl">
   <div class="hud mono" id="hud"></div>
-  <div class="plane" id="planePanel" hidden>
-    <div class="t" id="planeTitle">5 指平面</div>
-    <div class="signs" id="signs"><span>反轉</span><button class="btn sm" type="button" data-k="0">前後</button><button class="btn sm" type="button" data-k="1">左右</button><button class="btn sm" type="button" data-k="2">轉向</button></div>
-    <canvas id="planeView" aria-label="5 指平面即時估計"></canvas>
-  </div>
   </div>
   <div class="calib" id="calib" hidden></div>
   <video id="cam" playsinline muted></video>
@@ -397,8 +387,9 @@ const HAND = {
                               //   也是抖動上限：手越小，1 像素雜訊放大到螢幕越多。要靠太近才能操作就調低
   SWITCH_K: 1.3,              // 黏著：別的手要比目前這隻大 1.3 倍才換過去
   BACK_S: 0.5,                // 模式 2 → 1：只剩 1 隻夠大的手、連續 0.5 秒
-  CHI_MIN: 0.15,              // 手性 χ 的可信門檻：|χ| 小於這個（拇指貼在掌面上）就不拿來判斷鏡像
-  SIGN: [1, 1, 1],            // 實測修正：前後、左右、轉向各自的正負號（畫面上的「反轉」按鈕）
+  CHI_MIN: 0.15,              // 手性 χ 的可信門檻：|χ| 小於這個（拇指貼在掌面上）就不拿來判斷鏡像 / 左右手
+  GUESS_N: 5,                 // 鏡像初始猜測：收集這麼多幀可信的 χ 再投票（只猜一次，之後鎖定）
+  SIGN: [1, 1, 1],            // 保留未使用：舊版「反轉」按鈕（前後、左右、轉向各自翻號）。鏡像錯誤時左右與轉向一定一起反，改用一顆「鏡像」鈕；固定 [1, 1, 1]
 };
 const vsub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const vcross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -491,11 +482,59 @@ function createStrokeTracker() {
   };
   return T;
 }
+// 保留未使用（原本給 5 指平面小視窗顯示，已移除）：createGripTracker、handRotation、fingerNormal
 // 依拇指 → 小指順序的平面法向量（Newell 法，單位向量）
 function fingerNormal(P) {
   const c = centroid(P), n = [0, 0, 0];
   for (let k = 0; k < P.length; k++) { const m = vcross(vsub(P[k], c), vsub(P[(k + 1) % P.length], c)); n[0] += m[0]; n[1] += m[1]; n[2] += m[2]; }
   const l = Math.hypot(...n); return l > 1e-12 ? n.map((v) => v / l) : [0, 0, 1];
+}
+// ---------- 鏡像與左右手 ----------
+// 手性 χ（鏡頭座標的 3D 世界關鍵點 [x, y, z]，x 右、y 下、z 遠離鏡頭）：
+//   χ = −(拇指根 − 手腕) · [(小指根 − 手腕) × (食指根 − 手腕)]；括號 = 右手的手背法向量，拇指根偏手心側 → 未鏡像畫面裡的右手 χ > 0
+//   三重積旋轉不變號、反射變號 → χ 的正負號 = 「手性 × 鏡像」。單張影像拆不開這兩者（鏡像的右手和左手像素完全一樣）
+function chirality(wl) {
+  const c0 = wl[0], b = vcross(vsub(wl[17], c0), vsub(wl[5], c0));
+  const th = vsub(wl[1].map((v, i) => (v + wl[2][i]) / 2), c0);   // 拇指根：關鍵點 1、2 的中點
+  const nb = Math.hypot(...b), nt = Math.hypot(...th);
+  return nb > 1e-9 && nt > 1e-9 ? -vdot(th, b) / (nb * nt) : 0;
+}
+// 鏡頭 3D → 你的座標 W（X = 你的右、Y = 上、Z = 朝向你）
+//   未鏡像：W = (−x, −y, z)，繞垂直軸 180° 的純旋轉；已鏡像：重建出來的手 x 已反過一次 → W = (x, −y, z)
+const toUserW = (wl, mirror) => wl.map((p) => [(mirror === 1 ? 1 : -1) * p[0], -p[1], p[2]]);
+// 2D：鏡頭正規化座標 → 以畫面中心為原點的像素，方向 = 你看到的方向（右 = +x、下 = +y）
+const imgPxOf = (p, mirror, vw, vh) => [((mirror === 1 ? p.x : 1 - p.x) - 0.5) * vw, (p.y - 0.5) * vh];
+// 鏡像 + 左右手判斷
+//   mirror：+1 = 輸入已鏡像、−1 = 未鏡像、null = 還沒決定。null 時收集 GUESS_N 幀可信的 χ，假設是右手猜一次，之後鎖定；
+//           只有 toggle()（「鏡像」鈕）會再改。換左手不會碰到它 → 控制方向不會被翻反
+//   hand：+1 = 右手、−1 = 左手（只用來顯示手心 / 手背）。= sign(χ) × (已鏡像 ? −1 : +1)，平滑 + 遲滯
+//     χ 不可靠（拇指貼掌）時改用 MediaPipe 標籤：它的慣例不確定（實測和文件相反），所以從可信的幀學「標籤和 χ 同號還是反號」（agree）
+function createSideTracker() {
+  const S = { mirror: null, hand: 1, hv: 0, agree: 0, votes: 0, n: 0, guessed: false, lastCs: 0, flipped: false };
+  // chi：這一幀的 χ；label：MediaPipe 標籤 +1 = Right、−1 = Left、0 = 沒有。回傳 false = 鏡像還沒決定（這一幀先不要用）
+  S.update = (chi, label) => {
+    const ok = Math.abs(chi) >= HAND.CHI_MIN, cs = Math.sign(chi);
+    // flipped：可信的 χ 換號 = 畫面裡換成另一隻手（例如同一幀左右手互換）→ 呼叫端要重設撥球錨點，免得換手被當成一次撥球
+    S.flipped = false;
+    if (ok) { if (S.lastCs && cs !== S.lastCs) S.flipped = true; S.lastCs = cs; }
+    if (ok && label) S.agree += 0.05 * (label * cs - S.agree);
+    if (S.mirror === null) {
+      if (ok) { S.votes += cs; S.n++; }
+      if (S.n < HAND.GUESS_N) return false;
+      S.mirror = S.votes > 0 ? -1 : 1; S.guessed = true;   // 假設右手：χ > 0 = 沒鏡像
+    }
+    const c = ok ? cs : (label && Math.abs(S.agree) > 0.5 ? label * Math.sign(S.agree) : 0);
+    if (c) {
+      const h = c * (S.mirror === 1 ? -1 : 1);
+      S.hv += 0.25 * (h - S.hv);
+      if (S.hv > 0.3) S.hand = 1; else if (S.hv < -0.3) S.hand = -1;
+    }
+    return true;
+  };
+  S.set = (m) => { S.mirror = m === 1 ? 1 : m === -1 ? -1 : null; S.votes = 0; S.n = 0; };
+  // 翻鏡像 = 同一個 χ 對應的手也翻過來
+  S.toggle = () => { S.mirror = S.mirror === 1 ? -1 : 1; S.hv = -S.hv; S.hand = -S.hand; };
+  return S;
 }
 // === CORE-END ===
 
@@ -727,7 +766,7 @@ const BallUI = (() => {
 })();
 
 // ---------- 攝影機手勢：MediaPipe → 虛擬手 → 轉球 ----------
-// 依賴：ball、HAND、createGripTracker、fingerNormal、handRotation
+// 依賴：ball、HAND、createStrokeTracker、createSideTracker、chirality、toUserW、imgPxOf
 const HandCam = (() => {
   const MP_VERSIONS = ['1.0.1', '0.10.22', '0.10.14', ''];   // 依序嘗試（'' = 最新版）
   const MODEL_URLS = [
@@ -735,18 +774,18 @@ const HandCam = (() => {
     'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task',
   ];
   const CONN = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
-  const video = $('cam'), layer = $('handLayer'), pv = $('planeView');
+  const video = $('cam'), layer = $('handLayer');
   const H = {
     on: false, status: 'off', msg: '', recog: null, stream: null, lastVT: -1,
     recog2: null, mode: 1, backT: 0,   // 兩個辨識器：R1（numHands 1，平常用）、R2（numHands 2，有小手干擾時用，挑最大的）
     selW: null, nHands: 0, handR: 0, tooFar: false, inferMs: 0,   // 選中那隻手的手腕位置（追蹤身分）、偵測到幾隻、掌長佔畫面高度比例、推論耗時
-    mirror: null,          // 自動判斷：+1 = 輸入畫面已鏡像（筆電驅動鏡像）、−1 = 沒鏡像（多數手機前鏡頭）；null = 判斷中
+    mirror: null,          // = side.mirror：+1 = 輸入畫面已鏡像（筆電驅動常見）、−1 = 沒鏡像（多數手機前鏡頭）；null = 還沒決定
+    side: createSideTracker(),   // 鏡像（猜一次後鎖定、按鈕切換）+ 左右手（只做顯示）
     scale: 0, screenPerM: 1, bx: 0, by: 0,   // 映射：鏡頭比例尺（像素/公尺）、螢幕比例尺、球心（手圖層座標）
     yawOK: false, palmAng: 0,                  // 手掌面向螢幕（可轉向）與手掌法向量和 Z 的夾角
-    hv: 0, hvN: 0,         // 鏡像判斷的平滑值（+1 = 已鏡像、−1 = 沒鏡像）與採用的幀數
-    chi: 0, label: '',     // 顯示用：手性 χ（右手 > 0）、MediaPipe 原始 Right/Left 標籤
+    chi: 0, label: '',     // 這一幀的手性 χ、MediaPipe 原始 Right/Left 標籤
     pts2: null, W3: null, inZone: false, fist: false, gesture: '',
-    grip: createGripTracker(), stroke: createStrokeTracker(), tq: [0, 0, 0], wHand: [0, 0, 0], prevSm: null, lastT: 0, fps: 0, version: '', delegate: '',
+    stroke: createStrokeTracker(), lastT: 0, fps: 0, version: '', delegate: '',
   };
 
   async function loadModel() {
@@ -780,11 +819,11 @@ const HandCam = (() => {
     } catch (e) {
       H.status = 'err'; H.msg = (e && e.name === 'NotAllowedError') ? '攝影機權限被拒絕' : ('無法啟動：' + (e && e.message ? e.message : e)); stop(true); return;
     }
-    H.on = true; ball.noFric = true; H.scale = 0; H.yawOK = false; H.lastAct = ''; H.status = 'nohand'; H.msg = ''; H.mirror = null; H.hv = 0; H.hvN = 0; H.mode = 1; H.backT = 0; H.selW = null;
+    H.on = true; ball.noFric = true; H.scale = 0; H.yawOK = false; H.lastAct = ''; H.status = 'nohand'; H.msg = ''; H.mode = 1; H.backT = 0; H.selW = null;
     requestAnimationFrame(loop);
   }
   function stop(keepMsg) {
-    H.on = false; ball.noFric = false; H.grip.reset(); H.stroke.reset(); H.pts2 = null; H.inZone = false;
+    H.on = false; ball.noFric = false; H.stroke.reset(); H.pts2 = null; H.inZone = false;
     if (H.stream) H.stream.getTracks().forEach((t) => t.stop()); H.stream = null;
     if (!keepMsg) { H.status = 'off'; H.msg = ''; }
   }
@@ -809,7 +848,7 @@ const HandCam = (() => {
   //   比例尺 s（鏡頭像素 / 公尺）= 2D 關鍵點對 3D 世界座標（x、y）的最小平方縮放：只跟距離有關，手傾斜不影響（不像量 2D 掌長會被透視縮短）
   //   螢幕位置 = 球心 + (鏡頭像素 − 鏡頭中央) / s × (螢幕像素 / 公尺)
   //   → 遠近手都一樣大；手偏離鏡頭中央 1 個掌長，虛擬手就偏離球心 PALM_R 個球半徑
-  const imgPx = (p) => [((H.mirror === 1 ? p.x : 1 - p.x) - 0.5) * (video.videoWidth || 640), (p.y - 0.5) * (video.videoHeight || 480)];
+  const imgPx = (p) => imgPxOf(p, H.mirror, video.videoWidth || 640, video.videoHeight || 480);
   function fitScale(lm, W3) {
     const P = lm.map(imgPx), cp = [0, 0], cw = [0, 0];
     P.forEach((q, i) => { cp[0] += q[0]; cp[1] += q[1]; cw[0] += W3[i][0]; cw[1] += -W3[i][1]; });
@@ -861,30 +900,20 @@ const HandCam = (() => {
   const toScreen = (p) => { const q = imgPx(p), k = H.screenPerM / H.scale; return [H.bx + q[0] * k, H.by + q[1] * k]; };
   function process(res, dt, k) {
     const lm = res && res.landmarks && res.landmarks[k], wl = res && res.worldLandmarks && res.worldLandmarks[k];
-    if (!lm || !wl) { H.pts2 = null; H.W3 = null; H.inZone = false; H.fist = false; H.gesture = ''; H.grip.update(null); H.stroke.update(null); H.prevSm = null; H.status = 'nohand'; return; }
+    if (!lm || !wl) { H.pts2 = null; H.W3 = null; H.inZone = false; H.fist = false; H.gesture = ''; H.stroke.update(null); H.status = 'nohand'; return; }
     const g = res.gestures && res.gestures[k] && res.gestures[k][0];
     H.gesture = g ? g.categoryName : ''; H.fist = !!g && g.categoryName === 'Closed_Fist' && g.score >= HAND.FIST;
     const palm = [0, 5, 9, 13, 17].reduce((a, i) => ({ x: a.x + lm[i].x / 5, y: a.y + lm[i].y / 5 }), { x: 0, y: 0 });
-    // 輸入畫面有沒有鏡像：用手性（三重積）判斷，不依賴 MediaPipe 的 Right/Left 標籤（標籤慣例不可靠，實測判反過）
-    //   χ = −(拇指根 − 手腕) · [(小指根 − 手腕) × (食指根 − 手腕)]，在鏡頭座標（x 右、y 下、z 遠離鏡頭，右手系）計算
-    //   括號 = 右手的手背法向量；拇指根解剖上偏手心側 → 真的右手 χ > 0。旋轉不改變三重積正負號，反射（鏡像）會
-    //   系統假設用右手：χ > 0 = 重建出右手 = 輸入沒鏡像；χ < 0 = 重建出左手 = 輸入被鏡像過
-    //   拇指攤平貼掌面時 χ ≈ 0 不可靠 → 只採用 |χ| 夠大的幀，平滑後才切換，偶爾判錯不會跳
+    // 鏡像與左右手（createSideTracker）：鏡像只在還沒決定時用 χ 猜一次（假設右手），之後鎖定，只有「鏡像」鈕會改
+    //   以前每幀用 χ 自動判斷鏡像 → 換左手時 χ 變號，被當成「畫面鏡像了」→ 左右、轉向、骨架全部反過來
     const hd = res.handedness || res.handednesses, h = hd && hd[k] && hd[k][0];
-    H.label = h ? h.categoryName : '';   // 只做顯示，方便實測比對
-    {
-      const A = (i) => [wl[i].x, wl[i].y, wl[i].z], c0 = A(0), b = vcross(vsub(A(17), c0), vsub(A(5), c0));
-      const th = vsub(A(1).map((v, i) => (v + A(2)[i]) / 2), c0);   // 拇指根：關鍵點 1、2 的中點
-      const nb = Math.hypot(...b), nt = Math.hypot(...th);
-      H.chi = nb > 1e-9 && nt > 1e-9 ? -vdot(th, b) / (nb * nt) : 0;
-      if (Math.abs(H.chi) >= HAND.CHI_MIN) { H.hv += ((H.chi > 0 ? -1 : 1) - H.hv) * 0.15; H.hvN++; }   // hv：+1 = 已鏡像、−1 = 沒鏡像
-    }
-    if (H.hv > 0.3) H.mirror = 1; else if (H.hv < -0.3) H.mirror = -1;
-    if (H.mirror === null || H.hvN < 8) { H.status = 'detect'; H.pts2 = null; H.W3 = null; return; }
-    // 世界座標（鏡頭座標：x 右、y 下、z 離鏡頭越遠越大）→ W（你的座標）：X = 你的右、Y = 上、Z = 朝向你
-    //   未鏡像畫面：W = (−x, −y, z) 繞垂直軸 180° 的純旋轉；已鏡像畫面：重建出來的手本身 x 已反過一次 → W = (x, −y, z)
-    const sx = H.mirror === 1 ? 1 : -1;
-    H.W3 = wl.map((p) => [sx * p.x, -p.y, p.z]);
+    H.label = h ? h.categoryName : '';
+    H.chi = chirality(wl.map((p) => [p.x, p.y, p.z]));
+    if (!H.side.update(H.chi, H.label === 'Right' ? 1 : H.label === 'Left' ? -1 : 0)) { H.status = 'detect'; H.pts2 = null; H.W3 = null; return; }
+    if (H.side.guessed) { H.side.guessed = false; saveMirror(); }
+    if (H.side.flipped) { H.stroke.reset(); H.scale = 0; }   // 換手：撥球錨點、比例尺重來
+    H.mirror = H.side.mirror;
+    H.W3 = toUserW(wl.map((p) => [p.x, p.y, p.z]), H.mirror);
     // 映射到螢幕（球心為中心、手的大小固定）
     const r = $('ballZone').getBoundingClientRect(), lr = layer.getBoundingClientRect();
     const bc = $('ball').getBoundingClientRect(), bR = bc.width / 2 / 1.3;
@@ -902,9 +931,7 @@ const HandCam = (() => {
       H.palmAng = l > 1e-12 ? Math.acos(clamp(Math.abs(nb[2]) / l, 0, 1)) : Math.PI / 2;
       if (H.palmAng < HAND.YAW_IN) H.yawOK = true; else if (H.palmAng > HAND.YAW_OUT) H.yawOK = false;
     }
-    const tips = HAND.TIPS.map((i) => H.W3[i]);
     const active = H.inZone && !H.fist;
-    H.grip.update(tips, active);   // 只做顯示：5 指平面、法向量、手的轉動
     // 撥球：5 根指尖在畫面上的移動，像 5 個滑鼠游標推動球面（球的位置換算到手的圖層座標）
     const strokes = H.stroke.update(HAND.TIPS.map((i) => H.pts2[i]), active, bR, H.pts2[0]);
     if (strokes) {
@@ -914,20 +941,15 @@ const HandCam = (() => {
       let dw;
       if (H.yawOK && arc >= HAND.DOM * tn) { dw = [0, 0, BALL.GAIN * strokes.phi]; H.lastAct = 'yaw'; }
       else { const vt = ball.contactDelta(0, 0, strokes.t[0] / bR, -strokes.t[1] / bR); dw = [vt[0], vt[1], 0]; H.lastAct = 'move'; }
-      dw = dw.map((v, i) => v * HAND.SIGN[i]);
+      dw = dw.map((v, i) => v * HAND.SIGN[i]);   // SIGN 固定 [1, 1, 1]（保留未使用）
       ball.addRotation(dw, 1);
-      H.tq = H.tq.map((x, i) => x + dw[i]);
     }
-    H.tq = H.tq.map((x) => x * 0.9);   // 黑棒顯示用：最近施加的力矩方向（慢慢淡出）
     if (H.inZone && H.fist) ball.stop();
-    // 顯示用：手的角速度（每幀轉動 / dt，低通）
-    if (H.prevSm && dt > 0) { const r1 = handRotation(H.prevSm, H.grip.sm); H.wHand = H.wHand.map((v, i) => v + (r1[i] / dt - v) * 0.25); }
-    H.prevSm = H.grip.sm.map((p) => p.slice());
     H.status = !H.inZone ? 'out' : H.fist ? 'fist' : 'grip';
   }
 
-  // ---- 畫：虛擬手（全螢幕）、5 指平面（小視窗）、狀態 ----
-  const STATE_TXT = { off: '', loading: '', err: '', detect: '判斷中', nohand: '沒偵測到手', far: '手太遠（靠近一點）', out: '手在色塊外：球靠慣性轉', grip: '操作中：撥球', fist: '握拳：球停' };
+  // ---- 畫：虛擬手（全螢幕）；狀態文字給 HUD ----
+  const STATE_TXT = { off: '', loading: '', err: '', detect: '偵測中', nohand: '沒偵測到手', far: '手太遠（靠近一點）', out: '手在色塊外：球靠慣性轉', grip: '操作中：撥球', fist: '握拳：球停' };
   function drawHand() {
     const dpr = window.devicePixelRatio || 1, W = layer.clientWidth, Hh = layer.clientHeight;
     if (layer.width !== Math.round(W * dpr) || layer.height !== Math.round(Hh * dpr)) { layer.width = Math.round(W * dpr); layer.height = Math.round(Hh * dpr); }
@@ -943,9 +965,9 @@ const HandCam = (() => {
     const S = V.map((p) => { const f = D / Math.max(0.2, D - p[2]); return [H.ps[0] + k * f * (p[0] - cpal[0]), H.ps[1] - k * f * (p[1] - cpal[1]), p[2]]; });
     let zmin = Infinity, zmax = -Infinity; S.forEach((p) => { zmin = Math.min(zmin, p[2]); zmax = Math.max(zmax, p[2]); });
     const near = (z) => (zmax - zmin < 1e-6 ? 0.5 : (z - zmin) / (zmax - zmin));   // 0 = 最遠、1 = 最近
-    // 手掌：右手的手背法向量 = (小指根 − 手腕) × (食指根 − 手腕)；朝向你 = 看到手背
+    // 手掌：右手的手背法向量 = (小指根 − 手腕) × (食指根 − 手腕)；左手同一個公式算出的是手心法向量 → 乘上手性
     const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-    const nb = vcross(sub(V[17], V[0]), sub(V[5], V[0])), back = nb[2] > 0;
+    const nb = vcross(sub(V[17], V[0]), sub(V[5], V[0])), back = nb[2] * H.side.hand > 0;
     g.fillStyle = back ? 'rgba(214,160,120,0.45)' : 'rgba(0,168,143,0.30)';
     g.beginPath(); [0, 1, 5, 9, 13, 17].forEach((i, n) => (n ? g.lineTo(S[i][0], S[i][1]) : g.moveTo(S[i][0], S[i][1]))); g.closePath(); g.fill();
     const pc = [0, 5, 9, 13, 17].reduce((a, i) => [a[0] + S[i][0] / 5, a[1] + S[i][1] / 5], [0, 0]);
@@ -962,85 +984,49 @@ const HandCam = (() => {
     HAND.TIPS.forEach((i, n) => { const t = near(S[i][2]); g.fillStyle = n === 0 ? '#f07a1a' : '#e8178c'; g.globalAlpha = 0.45 + 0.55 * t; g.beginPath(); g.arc(S[i][0], S[i][1], (n === 0 ? 5 : 4) + 4 * t, 0, Math.PI * 2); g.fill(); });
     g.globalAlpha = 1;
   }
-  function drawPlane() {
-    const panel = $('planePanel');
-    panel.hidden = !H.on;
-    if (!H.on) return;
-    $('planeTitle').textContent = `5 指平面 · ${STATE_TXT[H.status] || ''}${H.fps ? ' · ' + Math.round(H.fps) + ' fps' : ''}`
-      + ` · 模式${H.mode} · 手${H.nHands} · 掌${Math.round(H.handR * 100)}% · 推論 ${H.inferMs.toFixed(1)} ms`
-      + ` · 轉向${H.yawOK ? '✓' : '✗'}（手掌∠${Math.round(H.palmAng / DEG)}°）${H.lastAct === 'yaw' ? ' ⟳' : ''}`
-      + ` · χ ${H.chi >= 0 ? '+' : ''}${H.chi.toFixed(2)} · 標籤 ${H.label || '—'} · 輸入${H.mirror === 1 ? '已鏡像' : H.mirror === -1 ? '未鏡像' : '判斷中'}`;
-    const dpr = window.devicePixelRatio || 1, S = pv.clientWidth;
-    if (!S) return;
-    if (pv.width !== Math.round(S * dpr)) { pv.width = Math.round(S * dpr); pv.height = Math.round(S * dpr); }
-    const g = pv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, S, S);
-    // 正面視角（和你看螢幕的方向相同）：右 = X、上 = Y；Z（朝向你）看不出長度，用法向量末端的實心 / 空心表示
-    const k = S * 0.33 / 0.06, ox = S / 2, oy = S * 0.42;
-    const proj = (p) => [ox + k * p[0], oy - k * p[1]];
-    [[[0.03, 0, 0], '#cc3a40', '右'], [[0, 0.03, 0], '#22825a', '上']].forEach(([v, c, t]) => {
-      const a = proj([0, 0, 0]), b = proj(v); g.strokeStyle = c; g.globalAlpha = 0.35; g.lineWidth = 1.5; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
-      g.globalAlpha = 0.6; g.fillStyle = c; g.font = '10px system-ui, sans-serif'; g.fillText(t, b[0] + 2, b[1]); g.globalAlpha = 1;
-    });
-    const sm = H.grip.sm;
-    if (sm) {
-      const c = centroid(sm), P = sm.map((p) => proj(vsub(p, c)));
-      g.fillStyle = 'rgba(232,23,140,0.18)'; g.strokeStyle = 'rgba(232,23,140,0.7)'; g.lineWidth = 1.5;
-      g.beginPath(); P.forEach((q, i) => (i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]))); g.closePath(); g.fill(); g.stroke();
-      P.forEach((q, i) => { g.fillStyle = i === 0 ? '#f07a1a' : '#e8178c'; g.beginPath(); g.arc(q[0], q[1], i === 0 ? 5 : 4, 0, Math.PI * 2); g.fill(); });
-      g.fillStyle = '#f07a1a'; g.font = '11px system-ui, sans-serif'; g.fillText('拇', P[0][0] + 6, P[0][1] + 4);
-      // 灰線 = 法向量（拇指 → 小指正轉的轉軸）；黑棒 = 剛剛實際施加給球的力矩方向。末端實心 = 指向你、空心 = 指向螢幕裡
-      const n = H.grip.n, a = proj([0, 0, 0]), c0 = proj(n.map((v) => v * 0.04));
-      g.strokeStyle = 'rgba(88,106,119,0.6)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(c0[0], c0[1]); g.stroke();
-      const tm = Math.hypot(...H.tq);
-      if (tm > 0.02) {
-        const t = H.tq.map((v) => v / tm), b = proj(t.map((v) => v * 0.045)), toYou = t[2] >= 0;
-        g.strokeStyle = '#12202a'; g.lineWidth = 2.5; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
-        g.beginPath(); g.arc(b[0], b[1], 5, 0, Math.PI * 2);
-        if (toYou) { g.fillStyle = '#12202a'; g.fill(); } else { g.fillStyle = '#fff'; g.fill(); g.lineWidth = 2; g.stroke(); }
-        g.fillStyle = '#12202a'; g.font = '10px system-ui, sans-serif'; g.fillText(`黑棒 = 給球的力矩 ${toYou ? '● 指向你' : '○ 指向螢幕'}`, 4, 12);
-      } else { g.fillStyle = '#586a77'; g.font = '10px system-ui, sans-serif'; g.fillText('灰線 = 法向量（拇→小指正轉軸）', 4, 12); }
-      // 錨點進度：指尖離下一次推球還差多少
-      const live = H.stroke.prog;
-      g.strokeStyle = '#00a88f'; g.lineWidth = 3; g.beginPath(); g.arc(S - 16, 16, 9, -Math.PI / 2, -Math.PI / 2 + clamp(live, 0, 1) * Math.PI * 2); g.stroke();
-      // 數字
-      const tilt = Math.acos(clamp(Math.abs(n[2]), 0, 1)) / DEG, w = H.wHand.map((v) => v / DEG);
-      g.fillStyle = '#12202a'; g.font = '10px ui-monospace, Menlo, monospace';
-      g.fillText(`n ${n.map((v) => (v >= 0 ? '+' : '') + v.toFixed(2)).join(' ')}`, 4, S - 30);
-      g.fillText(`傾斜 ${tilt.toFixed(0)}°（離正對鏡頭）`, 4, S - 17);
-      g.fillText(`手 ω ${w.map((v) => (v >= 0 ? '+' : '') + v.toFixed(0)).join(' ')} °/s`, 4, S - 4);
-    } else {
-      g.fillStyle = '#586a77'; g.font = '12px system-ui, sans-serif'; g.fillText('把手放到鏡頭前', 8, S - 10);
-    }
-  }
   function draw() {
-    drawHand(); drawPlane();
+    drawHand();
     const cal = $('calib');
-    cal.hidden = !(H.on && H.status === 'detect') && !(H.status === 'loading' || H.status === 'err');
-    if (H.status === 'detect') cal.textContent = '請用右手：把右手放到鏡頭前';
+    cal.hidden = !(H.on && H.status === 'detect' && H.mirror === null) && !(H.status === 'loading' || H.status === 'err');
+    if (H.status === 'detect') cal.textContent = '第一次使用：請把右手放到鏡頭前（用來判斷畫面是否鏡像）';
     else if (H.status === 'loading' || H.status === 'err') cal.textContent = H.msg;
-    const btn = $('btnCam'); btn.classList.toggle('on', H.on); btn.textContent = H.on ? '📷 關閉手勢' : '📷 手勢';
+    const btn = $('btnCam'); btn.classList.toggle('on', H.on); btn.textContent = H.on ? '關閉手勢辨識' : '手勢辨識';
+    const mb = $('btnMirror'); mb.hidden = !H.on; mb.classList.toggle('on', H.mirror === 1);
+  }
+  // HUD 的「手勢」列：狀態 · 左右手
+  function statusText() {
+    if (!H.on) return H.status === 'loading' ? '載入中' : H.status === 'err' ? '無法啟動' : '';
+    const t = STATE_TXT[H.status] || '';
+    return H.pts2 ? `${t} · ${H.side.hand > 0 ? '右手' : '左手'}` : t;
   }
   $('btnCam').addEventListener('click', () => { if (H.on) stop(); else if (H.status !== 'loading') start(); });
-  // 反轉按鈕：前後、左右、轉向各自翻正負號（記住在這台瀏覽器）
-  try { const v = JSON.parse(localStorage.getItem('dg_sign4') || 'null'); if (Array.isArray(v) && v.length === 3) HAND.SIGN = v.map((x) => (x < 0 ? -1 : 1)); } catch (e) { /* 忽略 */ }
-  const syncSigns = () => document.querySelectorAll('#signs button').forEach((b) => b.classList.toggle('on', HAND.SIGN[+b.dataset.k] < 0));
-  document.querySelectorAll('#signs button').forEach((b) => b.addEventListener('click', () => {
-    const k = +b.dataset.k; HAND.SIGN[k] = -HAND.SIGN[k]; syncSigns();
-    try { localStorage.setItem('dg_sign4', JSON.stringify(HAND.SIGN)); } catch (e) { /* 忽略 */ }
-  }));
-  syncSigns();
+  // 鏡像：記在這台瀏覽器（dg_mirror）。舊版「反轉」按鈕的設定（dg_sign4）不再使用，清掉以免殘留的反轉和鏡像互相打架
+  function saveMirror() { try { localStorage.setItem('dg_mirror', String(H.side.mirror)); } catch (e) { /* 忽略 */ } }
+  try { localStorage.removeItem('dg_sign4'); const m = parseInt(localStorage.getItem('dg_mirror'), 10); if (m === 1 || m === -1) H.side.set(m); } catch (e) { /* 忽略 */ }
+  H.mirror = H.side.mirror;
+  // 按鏡像：左右、轉向、骨架一起翻回來；撥球錨點與比例尺重來，翻轉那一下不會被當成撥球
+  function toggleMirror() {
+    if (!H.on) return;
+    H.side.toggle(); H.mirror = H.side.mirror; saveMirror();
+    H.scale = 0; H.stroke.reset(); H.pts2 = null; H.W3 = null;
+  }
+  $('btnMirror').addEventListener('click', toggleMirror);
+  window.addEventListener('keydown', (e) => { if (e.code === 'KeyM' && !e.repeat) toggleMirror(); });
   window.app_debug.hand = H;
-  return { draw, state: H, active: () => H.on && H.inZone && !H.fist };
+  return { draw, state: H, statusText, toggleMirror, active: () => H.on && H.inZone && !H.fist };
 })();
 
 // ---------- HUD、按鈕 ----------
 function updateHud() {
   const gs = Math.hypot(sim.vel[0], sim.vel[1]), hdg = ((sim.eul[2] / DEG) % 360 + 360) % 360;
   const mode = { cruise: '巡航', brake: '煞車中', hold: '定點' }[sim.pc.mode];
-  $('hud').innerHTML = [
+  const rows = [
     ['狀態', mode], ['地速', `${gs.toFixed(1)} m/s`], ['航向', `${Math.round(hdg).toString().padStart(3, '0')}°`],
     ['高度', `${(-sim.pos[2]).toFixed(2)} m`], ['距起點', `${Math.hypot(sim.pos[0], sim.pos[1]).toFixed(1)} m`],
-  ].map(([k, v]) => `<span class="k">${k}</span><span>${v}</span>`).join('');
+  ];
+  const hs = HandCam.statusText();
+  if (hs) rows.push(['手勢', hs]);
+  $('hud').innerHTML = rows.map(([k, v]) => `<span class="k">${k}</span><span>${v}</span>`).join('');
   const st = ball.sticks(), sg = (v, d) => (v < 0 ? '−' : '+') + Math.abs(v).toFixed(d);
   $('ballCmd').textContent = `前 ${sg(st.pitch * FLY.velMax, 1)}  右 ${sg(st.roll * FLY.velMax, 1)} m/s · 轉 ${sg(st.yaw * FLY.yawRate / DEG, 0)}°/s`;
 }
